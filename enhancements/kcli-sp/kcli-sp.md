@@ -655,7 +655,7 @@ other DCM providers.
 | `ZONE` | No | — | Zone metadata for registration |
 | `POLL_INTERVAL` | No | `30s` | Interval for polling kweb for status |
 | `DEBOUNCE_WINDOW` | No | `5s` | Minimum interval between status updates for the same resource |
-| `STATE_STORE_PATH` | No | `/data/state.db` | Path to the persistent BoltDB state store |
+| `STATE_STORE_PATH` | No | `/data/state.db` | Path to the persistent bbolt state store |
 | `LOG_LEVEL` | No | `info` | Log verbosity (debug, info, warn, error) |
 
 ### Status Reporting to DCM
@@ -689,7 +689,8 @@ multiple times within the window, only the final state is published.
 
 #### Internal State Store
 
-The SP maintains a persistent mapping (BoltDB by default) of:
+The SP maintains a persistent mapping ([bbolt](https://github.com/etcd-io/bbolt) —
+the etcd-maintained fork of BoltDB) of:
 
 - `dcm-instance-id` → kcli resource name (VM or cluster)
 - `dcm-instance-id` → last known status
@@ -927,7 +928,7 @@ re-associating a handful of resources.
 │  └──────────────────────┬────────────────────────────┘ │
 │                         │                              │
 │  ┌──────────────────────▼────────────────────────────┐ │
-│  │        Persistent State Store (BoltDB)            │ │
+│  │        Persistent State Store (bbolt)              │ │
 │  │  (dcm-instance-id ↔ kcli name mapping)           │ │
 │  └──────────────────────┬────────────────────────────┘ │
 │                         │                              │
@@ -950,7 +951,7 @@ re-associating a handful of resources.
 | `internal/handlers/v1alpha1` | HTTP handlers for VMs, clusters |
 | `internal/handlers` | Health handler (root `/health`) |
 | `internal/kweb` | kweb HTTP client, error normalization, rate limiting |
-| `internal/store` | BoltDB persistent state store |
+| `internal/store` | bbolt persistent state store |
 | `internal/monitor` | Polling-based status monitor with debounce |
 | `internal/events` | NATS CloudEvents publisher |
 | `internal/registration` | Dual SPM registration (VM + cluster) |
@@ -976,7 +977,7 @@ re-associating a handful of resources.
 
 ### Upgrade / Downgrade Strategy
 
-The kcli SP is stateless except for the persistent BoltDB state store.
+The kcli SP is stateless except for the persistent bbolt state store.
 
 On upgrade:
 
