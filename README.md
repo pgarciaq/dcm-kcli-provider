@@ -32,20 +32,7 @@ clusters through DCM without deploying a Kubernetes management stack.
 
 ## Architecture
 
-```
-┌─────────────────────────────┐     ┌──────────────────────┐
-│  dcm-kcli-provider (Go)     │     │  kweb (Python/kcli)  │
-│                             │────▶│  port 9000           │
-│  - OpenAPI server (Chi)     │HTTP │  - libvirt/ovirt/... │
-│  - SPM registration         │     │                      │
-│  - NATS status publisher    │     └──────────────────────┘
-│  - kweb HTTP client         │
-└─────────────────────────────┘
-         │
-         │ NATS CloudEvents
-         ▼
-   DCM Control Plane
-```
+![Architecture Overview](docs/architecture-overview.svg)
 
 ## Development
 

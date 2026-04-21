@@ -914,33 +914,7 @@ re-associating a handful of resources.
 
 ### Component Architecture
 
-```
-┌────────────────────────────────────────────────────────┐
-│                  dcm-kcli-provider                      │
-│                                                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
-│  │  VM Handler  │  │Cluster Handler│  │Health Handler│ │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘ │
-│         │                 │                  │         │
-│  ┌──────▼─────────────────▼──────────────────▼───────┐ │
-│  │               kweb HTTP Client                    │ │
-│  │  (error normalization, retry, rate limiting)      │ │
-│  └──────────────────────┬────────────────────────────┘ │
-│                         │                              │
-│  ┌──────────────────────▼────────────────────────────┐ │
-│  │        Persistent State Store (bbolt)              │ │
-│  │  (dcm-instance-id ↔ kcli name mapping)           │ │
-│  └──────────────────────┬────────────────────────────┘ │
-│                         │                              │
-│  ┌──────────────┐  ┌────▼─────────┐  ┌──────────────┐ │
-│  │  SPM Client  │  │Status Monitor│  │ NATS Client  │ │
-│  │(registration)│  │(poller+dbnce)│  │  (events)    │ │
-│  └──────────────┘  └──────────────┘  └──────────────┘ │
-└────────────────────────────────────────────────────────┘
-         │                  │                 │
-         ▼                  ▼                 ▼
-   DCM SP Manager      kweb (kcli)     NATS Server
-```
+![Component Architecture](../../docs/component-architecture.svg)
 
 ### Internal Packages
 
