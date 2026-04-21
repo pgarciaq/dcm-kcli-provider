@@ -1,8 +1,10 @@
 digraph architecture_overview {
-    rankdir=LR
     bgcolor="transparent"
     dpi=96
-    pad=0.4
+    pad=0.5
+    nodesep=0.7
+    ranksep=0.8
+    newrank=true
 
     node [
         fontname="Helvetica"
@@ -21,6 +23,21 @@ digraph architecture_overview {
         penwidth=1.2
     ]
 
+    // External: left side
+    nats [
+        label="NATS\nServer"
+        fillcolor="#fef7e0"
+        color="#f9ab00"
+        penwidth=2
+    ]
+    dcm [
+        label="DCM\nControl Plane"
+        fillcolor="#e6f4ea"
+        color="#34a853"
+        penwidth=2
+    ]
+
+    // SP box
     subgraph cluster_sp {
         label="dcm-kcli-provider (Go)"
         labeljust=l
@@ -31,62 +48,61 @@ digraph architecture_overview {
         color="#4285f4"
         penwidth=2
 
+        nats_client [
+            label="NATS Publisher  (CloudEvents)"
+            fillcolor="#c6dafc"
+        ]
         server [
-            label="OpenAPI Server\n(Chi router)"
+            label="OpenAPI Server  (Chi router)"
             fillcolor="#c6dafc"
         ]
         spm_client [
-            label="SPM Client\n(registration)"
+            label="SPM Client  (registration)"
             fillcolor="#c6dafc"
         ]
         kweb_client [
-            label="kweb HTTP Client\n(error normalization)"
-            fillcolor="#c6dafc"
-        ]
-        nats_client [
-            label="NATS Publisher\n(CloudEvents)"
+            label="kweb HTTP Client  (error normalization)"
             fillcolor="#c6dafc"
         ]
         store [
-            label="State Store\n(bbolt)"
+            label="State Store  (bbolt)"
             shape=cylinder
             fillcolor="#c6dafc"
         ]
+
+        // Vertical stack inside SP
+        nats_client -> server -> spm_client -> kweb_client -> store [style=invis]
     }
 
-    subgraph cluster_external {
-        rank=same
-        label=""
-        style=invis
+    // External: right side
+    kweb [
+        label="kweb\n(kcli HTTP API)\nport 9000"
+        fillcolor="#fce8e6"
+        color="#ea4335"
+        penwidth=2
+    ]
+    hypervisor [
+        label="libvirt / KVM\n(or other backend)"
+        shape=box3d
+        fillcolor="#f3e8fd"
+        color="#9334e6"
+        penwidth=2
+    ]
 
-        kweb [
-            label="kweb\n(kcli HTTP API)\nport 9000"
-            fillcolor="#fce8e6"
-            color="#ea4335"
-        ]
-        dcm [
-            label="DCM\nControl Plane"
-            fillcolor="#e6f4ea"
-            color="#34a853"
-        ]
-        nats [
-            label="NATS\nServer"
-            fillcolor="#fef7e0"
-            color="#f9ab00"
-        ]
-        hypervisor [
-            label="libvirt / KVM\n(or other backend)"
-            shape=box3d
-            fillcolor="#f3e8fd"
-            color="#9334e6"
-        ]
-    }
+    // Row alignment
+    { rank=same; nats; nats_client }
+    { rank=same; dcm; server; kweb }
+    { rank=same; kweb_client; hypervisor }
 
-    server -> kweb_client [style=invis]
-    kweb_client -> kweb [label="  HTTP  " fontcolor="#ea4335"]
-    kweb -> hypervisor [label="  libvirt API  " fontcolor="#9334e6"]
-    spm_client -> dcm [label="  register  " fontcolor="#34a853"]
+    // Left-side edges
     nats_client -> nats [label="  status events  " fontcolor="#f9ab00"]
-    dcm -> server [label="  provision / health  " fontcolor="#4285f4"]
-    kweb_client -> store [dir=both style=dashed color="#999999" label="  id ↔ name  "]
+    dcm -> server [label="  provision / health  " fontcolor="#4285f4" dir=both]
+    spm_client -> dcm [label="register  " fontcolor="#34a853" constraint=false]
+
+    // Right-side edges
+    kweb_client -> kweb [label="  HTTP  " fontcolor="#ea4335" constraint=false]
+    kweb -> hypervisor [label="  libvirt API  " fontcolor="#9334e6"]
+
+    // Internal dashed edge
+    kweb_client -> store [dir=both style=dashed color="#999999" label="id ↔ name"]
 }
