@@ -5,6 +5,7 @@ digraph component_architecture {
     pad=0.5
     nodesep=0.6
     ranksep=0.7
+    newrank=true
 
     node [
         fontname="Helvetica"
@@ -119,20 +120,28 @@ digraph component_architecture {
         penwidth=2
     ]
 
-    // Internal edges
+    // Internal edges — handlers to kweb client
     vm_handler -> kweb_client
     cluster_handler -> kweb_client
     health_handler -> kweb_client
 
     kweb_client -> store [dir=both style=dashed]
 
-    monitor -> kweb_client
-    monitor -> store [dir=both style=dashed]
-    monitor -> nats_client
+    // Force vertical ordering: store above infra clients
+    store -> monitor [style=invis]
+    store -> spm_client [style=invis]
+
+    // Monitor edges — constraint=false to keep monitor in infra row
+    monitor -> kweb_client [constraint=false]
+    monitor -> store [dir=both style=dashed constraint=false]
+    monitor -> nats_client [constraint=false]
 
     // External edges
     spm_client -> dcm_spm [label="  register  " fontcolor="#34a853"]
-    kweb_client -> kweb [label="  HTTP  " fontcolor="#ea4335"]
-    monitor -> kweb [label="  poll  " fontcolor="#ea4335" style=dashed]
+    kweb_client -> kweb [label="  HTTP  " fontcolor="#ea4335" constraint=false]
+    monitor -> kweb [label="  poll  " fontcolor="#ea4335" style=dashed weight=10]
     nats_client -> nats [label="  status events  " fontcolor="#f9ab00"]
+
+    // Keep nats_client in the same row as monitor/spm_client
+    { rank=same; spm_client; monitor; nats_client }
 }
