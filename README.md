@@ -5,6 +5,10 @@ machines and Kubernetes clusters through
 [kcli](https://github.com/karmab/kcli)'s HTTP API
 ([kweb](https://kcli.readthedocs.io/en/latest/#web-interface)).
 
+**Designed for development, testing, and homelab environments.** For production
+workloads, use the [KubeVirt SP](https://github.com/dcm-project/kubevirt-service-provider)
+or [ACM Cluster SP](https://github.com/dcm-project/acm-cluster-service-provider).
+
 ## Status
 
 **Enhancement proposal phase.** See
@@ -23,9 +27,8 @@ types:
 
 Unlike the existing KubeVirt and ACM providers — which talk directly to
 Kubernetes CRDs — this provider communicates with kcli's kweb HTTP API. This
-makes it suitable for environments where the infrastructure is managed by
-libvirt, oVirt, vSphere, or other hypervisors that kcli supports, without
-requiring a Kubernetes cluster as the management plane.
+makes it ideal for developers and homelab operators who want to manage VMs and
+clusters through DCM without deploying a Kubernetes management stack.
 
 ## Architecture
 

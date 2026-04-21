@@ -20,28 +20,16 @@ see-also:
 
 ## Open Questions
 
-1. **Persistent state store technology.** The SP must persist the mapping
-   between DCM instance IDs and kcli resource names. Should this use SQLite
-   (simplest, file-based), BoltDB (embedded Go key-value store), or an
-   external database (PostgreSQL, etcd) that would enable multi-replica
-   deployments?
-
-2. **kweb version pinning.** kweb has no versioned API contract. Should the
+1. **kweb version pinning.** kweb has no versioned API contract. Should the
    SP pin to a specific kcli release and test against it, or attempt to
    support multiple kweb versions with feature detection?
 
-3. **Multi-backend status mapping.** kweb VM status strings vary by backend
+2. **Multi-backend status mapping.** kweb VM status strings vary by backend
    (libvirt returns `up`/`down`; vSphere adds `suspended`; OpenStack has
-   `error`; cloud providers use their own strings). Should the SP implement
-   per-backend mapping tables, or require all kweb instances to normalize to
-   a common status set?
+   `error`). Should the SP implement per-backend mapping tables, or
+   document libvirt as the only supported backend for v1?
 
-4. **kweb kubeconfig security.** kweb exposes `GET /kubes/{name}/kubeconfig`
-   without authentication, returning raw cluster-admin credentials. Should
-   the SP proxy kubeconfig retrieval (adding its own access control), or
-   require operators to restrict this kweb endpoint at the network layer?
-
-5. **Cluster type `kind`.** kweb's `swagger.yml` lists `kind` as a valid
+3. **Cluster type `kind`.** kweb's `swagger.yml` lists `kind` as a valid
    cluster type, but the implementation has no handler for it (causing a
    runtime error). Should the SP reject `kind` with a clear error, or
    attempt to support it once kweb is fixed upstream?
@@ -50,12 +38,13 @@ see-also:
 
 The kcli Service Provider is a DCM Service Provider that manages virtual
 machines and Kubernetes clusters through
-[kcli](https://github.com/karmab/kcli)'s HTTP API (kweb). Unlike the existing
-KubeVirt SP and ACM Cluster SP — which interact directly with Kubernetes CRDs
-on a management cluster — the kcli SP communicates with a standalone kweb
-instance, enabling DCM to provision infrastructure on any hypervisor or cloud
-backend that kcli supports (libvirt/KVM, oVirt/RHV, vSphere, OpenStack, AWS,
-GCP, Azure, IBM Cloud, and others).
+[kcli](https://github.com/karmab/kcli)'s HTTP API (kweb). It is designed for
+**development, testing, and homelab environments** — not for production
+workloads. Unlike the existing KubeVirt SP and ACM Cluster SP — which interact
+directly with Kubernetes CRDs on a management cluster — the kcli SP
+communicates with a standalone kweb instance, enabling DCM to provision
+infrastructure on any hypervisor backend that kcli supports
+(primarily libvirt/KVM for homelab use).
 
 Because DCM registration is per service type, the kcli SP registers **twice**
 with the Service Provider Manager: once for the `vm` service type and once for
@@ -72,22 +61,27 @@ The existing DCM service providers cover two specific platforms:
   Management and HyperShift.
 
 Both require a Kubernetes cluster as their management plane. This leaves a gap
-for environments where:
+for **developers and homelab operators** who want to use DCM without deploying
+a full Kubernetes management stack:
 
-1. Infrastructure is managed by traditional hypervisors (libvirt/KVM, vSphere,
-   oVirt) without a Kubernetes management cluster.
-2. Operators want a single tool to provision both VMs and Kubernetes clusters
-   across heterogeneous infrastructure.
-3. Edge or sovereign cloud deployments use lightweight infrastructure that
-   doesn't justify a full Kubernetes management layer.
+1. **Developer inner loop:** Engineers building DCM integrations, service
+   providers, or UIs need a lightweight backend to provision real VMs and
+   clusters without access to a KubeVirt or ACM environment.
+2. **Homelab experimentation:** Enthusiasts running libvirt/KVM on a personal
+   server want to manage their VMs and clusters through DCM's unified API.
+3. **CI/CD test environments:** Automated test pipelines need a disposable
+   provider that can spin up VMs and clusters on bare-metal or nested-virt CI
+   runners.
 
-kcli fills this gap. It is a mature, open-source tool that wraps libvirt,
-oVirt, vSphere, OpenStack, and multiple public clouds behind a unified API.
-Its HTTP interface (kweb) exposes both VM and Kubernetes cluster lifecycle
-operations, making it a natural fit as a DCM backend.
+kcli fills this gap. It is a mature, open-source tool that wraps libvirt and
+other hypervisors behind a unified API. Its HTTP interface (kweb) exposes both
+VM and Kubernetes cluster lifecycle operations, making it a natural fit as a
+lightweight DCM backend for non-production use.
 
 ### Goals
 
+- Provide a **lightweight, easy-to-deploy** DCM provider for development and
+  homelab use.
 - Define the lifecycle of a DCM SP that manages VMs and Kubernetes clusters
   through kweb.
 - Define the dual registration flow (one per service type) with the DCM SP
@@ -95,57 +89,61 @@ operations, making it a natural fit as a DCM backend.
 - Define CREATE, READ, and DELETE endpoints for both VMs and clusters.
 - Define status reporting for DCM requests.
 - Define the kweb HTTP client contract and error normalization strategy.
+- Minimize operational prerequisites: no Kubernetes management cluster, no
+  mTLS infrastructure, no external databases.
 
 ### Non-Goals
 
+- **Production workloads.** This SP is for development, testing, and homelab
+  environments. Production deployments should use the KubeVirt SP or ACM
+  Cluster SP.
 - Day 2 operations (stop, start, restart, scale, snapshot, migrate) for VMs
   or clusters.
-- Adding authentication to kweb itself (handled externally via reverse proxy
-  or upstream contribution).
+- Adding authentication to kweb itself (the homelab deployment model assumes
+  a trusted network).
 - Implementing a kweb instance manager or deployer; kweb is assumed to be
   pre-deployed.
 - Supporting kcli plans, products, containers, networks, pools, or repos
   through DCM.
 - Supporting kcli's CLI directly (this SP uses the HTTP API exclusively).
 - Defining the UPDATE endpoint (out of scope for v1).
-- Multi-replica SP deployment (v1 runs as a single instance; see
-  Drawbacks).
+- High availability or multi-replica deployment (not needed for dev/homelab).
 
 ## Proposal
 
 ### User Stories
 
-#### Story 1: Edge Datacenter Operator
+#### Story 1: DCM Developer
 
-As a datacenter operator managing bare-metal servers with libvirt, I want to
-register my infrastructure with DCM so that tenants can provision VMs through
-the DCM catalog without needing a Kubernetes management cluster.
+As a developer working on DCM integrations, I want a provider I can run on
+my laptop (libvirt/KVM) so that I can test VM and cluster provisioning
+through the DCM API without needing access to a KubeVirt or ACM environment.
 
-#### Story 2: Sovereign Cloud Platform Team
+#### Story 2: Homelab Operator
 
-As a sovereign cloud platform team, I want to offer both VMs and lightweight
-Kubernetes clusters (k3s) to my tenants through a single DCM instance, using
-kcli to abstract the underlying hypervisor.
+As a homelab enthusiast running libvirt on a personal server, I want to
+manage my VMs and k3s clusters through DCM's unified API instead of
+switching between `virsh` and `kcli` commands.
 
-#### Story 3: Lab Administrator
+#### Story 3: CI Pipeline
 
-As a lab administrator with vSphere infrastructure, I want to provision
-development clusters through DCM using kcli, so that developers can
-self-service cluster creation without direct vSphere access.
+As a CI/CD pipeline, I need a lightweight DCM provider that can provision
+disposable VMs and clusters on bare-metal or nested-virt runners to test
+DCM workflows end-to-end without cloud infrastructure costs.
 
 ### Assumptions
 
 - A kweb instance is deployed, running, and reachable over the network from
   the kcli SP binary.
 - The kweb instance has valid credentials for its configured backend (e.g.,
-  libvirt socket access, vSphere credentials, cloud API keys).
-- **Hard prerequisite:** kweb **must** be deployed behind a reverse proxy or
-  within a restricted network segment that enforces authentication (mTLS or
-  token-based) and TLS termination. kweb has **no built-in authentication**
-  and exposes destructive operations (VM/cluster deletion) and sensitive
-  credentials (cluster-admin kubeconfigs) to any network client that can
-  reach it. Deploying kweb without network-level access control is
-  **not supported** by this SP.
+  libvirt socket access).
+- The deployment is on a **trusted network** (homelab LAN, developer
+  workstation, or CI runner). kweb has **no built-in authentication** and
+  exposes destructive operations and sensitive data (cluster-admin
+  kubeconfigs) to any network client that can reach it. For
+  non-trusted networks, deploying kweb behind a reverse proxy with
+  mTLS or token-based authentication is **strongly recommended** — see
+  Risks and Mitigations.
 - Bidirectional network connectivity: the SP must reach kweb (HTTP), DCM
   must reach the SP (HTTP for health checks and provisioning requests), and
   the SP must reach NATS (for status events).
@@ -677,13 +675,8 @@ The SP runs a background goroutine that periodically:
 
 The poll interval is configurable (default 30 seconds). This is a trade-off:
 shorter intervals increase load on kweb but reduce status reporting latency.
-
-**Scalability bound:** `GET /vms` returns all VMs with enriched info. At
-scale (500+ VMs), this generates significant load on kweb and the underlying
-hypervisor API. For v1, the SP is designed for environments with up to
-~500 managed resources (VMs + clusters combined). Larger deployments should
-use the KubeVirt SP or ACM Cluster SP, which use informers instead of
-polling.
+At homelab scale (tens of resources), the default interval imposes negligible
+load on kweb.
 
 #### Debounce Logic
 
@@ -708,17 +701,19 @@ SP is the translation layer between DCM's UUID-based resource model and
 kcli's name-based model.
 
 **Durability:** The store is persisted to disk at `STATE_STORE_PATH`. In
-containerized deployments, this path must be backed by a persistent volume.
-Loss of the store means DCM loses tracking of all managed resources.
+containerized deployments, this path should be backed by a persistent volume
+to survive container restarts. In a homelab, a host-mounted directory is
+sufficient.
 
 **Recovery on restart:** The SP reloads the store from disk and reconciles
 against kweb by listing all resources. Resources in the store that no longer
 exist in kweb are marked `DELETED`. Resources in kweb that are not in the
 store are logged as orphans (created outside DCM or from a lost store).
 
-**v1 limitation:** The store is a local file, which means the SP cannot run
-as multiple replicas. Multi-replica deployments would require externalizing
-the store (e.g., PostgreSQL, etcd). This is deferred to v2.
+**If the store is lost:** At homelab scale, the simplest recovery is to
+delete the tracked resources from DCM and re-create them (or manually
+re-associate them). This is an acceptable trade-off for the simplicity of
+a single-file embedded store.
 
 #### CloudEvents Format
 
@@ -829,39 +824,35 @@ come up.
 A network-accessible kweb instance can be used to create or destroy
 infrastructure by anyone who can reach it. Additionally, kweb exposes
 cluster-admin kubeconfigs via `GET /kubes/{name}/kubeconfig` without any
-access control — even when kweb is running in readonly mode.
+access control.
 
-**Mitigation:** Deploy kweb behind a reverse proxy (e.g., Envoy, Nginx,
-HAProxy) that provides mTLS or token-based authentication. This is a **hard
-prerequisite**, not an optional recommendation — it is documented as such in
-the Assumptions section and the deployment guide. The SP's own health check
-validates kweb connectivity but does not verify that the proxy layer is in
-place; operators are responsible for infrastructure security.
+**Mitigation:** The homelab/dev/test deployment model assumes a **trusted
+network** (local LAN, localhost, or isolated CI environment). This is
+acceptable for the intended use case — a developer's workstation or a
+personal server. For deployments on shared or untrusted networks, kweb
+should be placed behind a reverse proxy (Nginx, Caddy, etc.) with
+authentication enabled.
 
 #### kweb Credential Exposure
 
 **Risk:** kweb's `GET /kubes/{name}/kubeconfig` returns raw cluster-admin
 kubeconfigs without authentication. The `/vmconsole/{name}` endpoint returns
-VNC/SPICE passwords and spawns `websockify` processes via `os.popen`. These
-are **not** gated by kweb's readonly mode.
+VNC/SPICE passwords.
 
-**Mitigation:** Network-level access control (see above). The SP does not
-proxy the kubeconfig endpoint in v1; operators who need kubeconfig retrieval
-through DCM should access kweb directly through the authenticated proxy.
-Future versions may add a `GET /api/v1alpha1/clusters/{id}/kubeconfig`
-endpoint to the SP with its own access control.
+**Mitigation:** On a trusted homelab network, the kubeconfig data is no
+more exposed than it would be via direct `kcli` CLI access. The SP does not
+proxy the kubeconfig endpoint in v1.
 
 #### kweb Concurrency Limitations
 
 **Risk:** kweb's cluster creation handler spawns unbounded Python threads
-(one per `POST /kubes` request). Concurrent cluster creation requests can
-exhaust system resources. Additionally, kweb shares a single `Kconfig()`
-context per request, and concurrent operations may conflict on shared kcli
-configuration files.
+(one per `POST /kubes` request). Concurrent operations may conflict on
+shared kcli configuration files.
 
-**Mitigation:** The SP implements client-side rate limiting for kweb
-requests, serializing cluster creation operations and limiting concurrent VM
-operations to a configurable maximum.
+**Mitigation:** At homelab scale (a handful of concurrent operations), this
+is unlikely to cause issues. The SP still serializes cluster creation
+operations as a defensive measure, but this is an implementation detail
+rather than a critical safeguard.
 
 #### kweb Error Response Inconsistency
 
@@ -903,23 +894,20 @@ service type; an admin registers one `kcli-vm-libvirt` and one
 status updates. The kcli SP uses polling, introducing up to one poll-interval
 of latency in status reporting.
 
-**Mitigation:** Default poll interval is 30 seconds, which is acceptable for
-VM and cluster lifecycle events (which are measured in minutes, not seconds).
-The interval is configurable for deployments that need tighter feedback
-loops. Future work could add a kweb webhook/SSE endpoint upstream to enable
-push-based status.
+**Mitigation:** For development and homelab use, 30 seconds of latency is
+a non-issue — VM and cluster lifecycle events take minutes, not seconds.
+The interval is configurable for tighter feedback in automated testing.
 
 #### State Store Loss
 
 **Risk:** If the persistent state store is lost (disk failure, container
 restart without persistent volume), the SP loses the mapping between DCM
-instance IDs and kcli resource names. All managed resources become orphans
-from DCM's perspective.
+instance IDs and kcli resource names.
 
-**Mitigation:** The store must be backed by a persistent volume in
-containerized deployments. The SP logs a warning on startup if the store is
-empty but kweb reports existing resources. Recovery requires manual
-re-association or re-provisioning.
+**Mitigation:** At homelab scale, this is a minor inconvenience rather than
+a disaster. The SP logs a warning on startup if the store is empty but kweb
+reports existing resources. Recovery means re-provisioning or manually
+re-associating a handful of resources.
 
 ## Design Details
 
@@ -1011,39 +999,37 @@ On downgrade:
   handling, pagination (AEP-132), canonical status enums, canonical
   CloudEvents format, debounce logic, persistent state store design,
   kweb security audit findings, and operational scalability bounds.
+- 2026-04-22: Scoped to development/testing/homelab use. Simplified
+  security posture (trusted network assumed), removed multi-replica and
+  scalability ceiling concerns, updated user stories and motivation.
 
 ## Drawbacks
 
 - **Polling instead of watching:** Unlike Kubernetes-based SPs that use
   informers for near-real-time status updates, the kcli SP must poll kweb.
-  This introduces latency and adds load on kweb proportional to the number
-  of managed resources and the poll frequency.
+  At homelab scale this is negligible, but it means status changes are
+  reported with up to 30 seconds of delay.
 
 - **External dependency on kweb:** The SP cannot function without a running
-  kweb instance. This adds an operational component that must be deployed,
-  monitored, and secured (via reverse proxy) alongside the SP.
+  kweb instance. This adds one more process to run alongside the SP,
+  though kcli is easy to install and `kcli start kweb` is a single command.
 
-- **No authentication in kweb:** kweb has no built-in auth. The SP cannot
-  verify that it is talking to the intended kweb instance, and kweb cannot
-  verify that requests come from the SP. This must be mitigated at the
-  network/proxy layer, and is a **hard prerequisite** for deployment.
+- **No authentication in kweb:** kweb has no built-in auth. On a trusted
+  homelab network this is acceptable; on shared networks it requires a
+  reverse proxy. See Risks and Mitigations.
 
 - **Name-based vs. ID-based resources:** kcli uses names as primary
   identifiers; DCM uses UUIDs. The SP must maintain a persistent mapping
-  between the two, which adds state management complexity and a failure mode
-  if the mapping is lost.
+  between the two. At homelab scale, losing this mapping is a minor
+  inconvenience (re-provision a few resources), not a catastrophic failure.
 
-- **Single-replica only (v1):** The local BoltDB state store prevents
-  horizontal scaling. Multi-replica deployments require an external shared
-  store, which is deferred to v2.
+- **Not for production:** This SP is intentionally scoped to
+  development/testing/homelab. It lacks the HA, security hardening, and
+  scalability guarantees of the KubeVirt and ACM providers.
 
 - **Backend-specific status mapping:** kweb returns different status strings
-  per backend (libvirt, vSphere, OpenStack, cloud). Only the libvirt mapping
-  is fully specified for v1; other backends will require additional mapping
-  tables and testing.
-
-- **Scalability ceiling:** The polling approach is designed for up to ~500
-  managed resources. Larger environments should use Kubernetes-based SPs.
+  per backend. Only the libvirt mapping is fully specified for v1; other
+  backends will require additional mapping tables and testing.
 
 ## Alternatives
 
@@ -1178,7 +1164,6 @@ minimal changes to the rest of the codebase.
 - **Container registry:** `quay.io/dcm-project/dcm-kcli-provider` (once
   accepted into dcm-project org).
 - **Test infrastructure:** A CI environment with libvirt/QEMU available for
-  integration tests, or a pre-deployed kweb instance accessible from CI
-  runners.
-- **Persistent volume:** CI/CD pipelines must test BoltDB state store
-  persistence across container restarts.
+  integration tests (nested virt or bare-metal runners), or a pre-deployed
+  kweb instance. A developer's laptop with libvirt is sufficient for local
+  testing.

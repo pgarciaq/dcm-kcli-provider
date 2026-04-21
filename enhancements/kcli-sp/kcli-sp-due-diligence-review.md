@@ -14,6 +14,25 @@ findings total.
 > enhanced proposal (commit `a119447`). This document is preserved as an
 > audit trail.
 
+> **Scope update (2026-04-22):** The proposal has been rescoped to
+> **development, testing, and homelab environments only** (trusted networks,
+> small scale, single instance). This significantly changes the effective
+> severity of several findings:
+>
+> - **SEC-01, SEC-02 (Critical → Low for homelab):** kweb's lack of auth is
+>   acceptable on a trusted homelab LAN — no different from running `virsh`
+>   or `kubectl` without auth on localhost.
+> - **OPS-01 (High → Low):** State store loss at homelab scale means
+>   re-provisioning a handful of resources, not a production incident.
+> - **OPS-02 (Medium → N/A):** Multi-replica is not needed for dev/homelab.
+> - **OPS-03 (Medium → N/A):** Polling scalability is irrelevant with tens
+>   of resources.
+> - **OPS-04 (Medium → Low):** kweb concurrency issues are unlikely with
+>   single-digit concurrent operations.
+>
+> The original severity ratings are preserved below for reference if the
+> scope is ever expanded to production use.
+
 ---
 
 ## Security
