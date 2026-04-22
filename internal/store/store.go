@@ -38,7 +38,7 @@ type Store struct {
 }
 
 func New(path string) (*Store, error) {
-	db, err := bolt.Open(path, 0600, &bolt.Options{Timeout: 1 * time.Second})
+	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 1 * time.Second})
 	if err != nil {
 		return nil, fmt.Errorf("opening bbolt store: %w", err)
 	}
@@ -57,7 +57,7 @@ func New(path string) (*Store, error) {
 		return runMigrations(tx, mb)
 	})
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("initializing store: %w", err)
 	}
 

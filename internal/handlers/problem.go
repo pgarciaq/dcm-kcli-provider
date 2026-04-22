@@ -23,5 +23,5 @@ func WriteProblem(w http.ResponseWriter, r *http.Request, status int, detail str
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(pd)
+	_ = json.NewEncoder(w).Encode(pd) //nolint:errchkjson // ProblemDetail has only safe fields
 }

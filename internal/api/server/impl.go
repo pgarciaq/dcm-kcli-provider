@@ -120,12 +120,6 @@ func statusText(code int) string {
 
 // --- Health ---
 
-func (s *StrictServerImpl) healthResponse() (HealthStatus, *string, *float32, *string) {
-	uptime := float32(time.Since(s.startedAt).Seconds())
-	ver := s.version
-	return Pass, &ver, &uptime, nil
-}
-
 func (s *StrictServerImpl) doHealthCheck(ctx context.Context) (HealthStatus, *string, *float32, *string) {
 	uptime := float32(time.Since(s.startedAt).Seconds())
 	ver := s.version
@@ -280,7 +274,7 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 	if req.Params.PageToken != nil && *req.Params.PageToken != "" {
 		v, err := strconv.Atoi(*req.Params.PageToken)
 		if err != nil || v < 0 {
-			return ListVMsdefaultApplicationProblemPlusJSONResponse{
+			return ListVMsdefaultApplicationProblemPlusJSONResponse{ //nolint:nilerr // validation error → 400 response, not a handler error
 				Body:       problemError(400, fmt.Sprintf("invalid page_token: %q", *req.Params.PageToken)),
 				StatusCode: 400,
 			}, nil
@@ -505,7 +499,7 @@ func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersReq
 	if req.Params.PageToken != nil && *req.Params.PageToken != "" {
 		v, err := strconv.Atoi(*req.Params.PageToken)
 		if err != nil || v < 0 {
-			return ListClustersdefaultApplicationProblemPlusJSONResponse{
+			return ListClustersdefaultApplicationProblemPlusJSONResponse{ //nolint:nilerr // validation error → 400 response, not a handler error
 				Body:       problemError(400, fmt.Sprintf("invalid page_token: %q", *req.Params.PageToken)),
 				StatusCode: 400,
 			}, nil

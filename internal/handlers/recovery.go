@@ -16,13 +16,13 @@ func PanicRecovery(logger *slog.Logger) func(next http.Handler) http.Handler {
 					pd := ProblemDetail{
 						Type:     "about:blank",
 						Title:    "Internal Server Error",
-						Status:   500,
+						Status:   http.StatusInternalServerError,
 						Detail:   "an unexpected error occurred",
 						Instance: r.URL.Path,
 					}
 					w.Header().Set("Content-Type", "application/problem+json")
-					w.WriteHeader(500)
-					json.NewEncoder(w).Encode(pd)
+					w.WriteHeader(http.StatusInternalServerError)
+					_ = json.NewEncoder(w).Encode(pd)
 				}
 			}()
 			next.ServeHTTP(w, r)

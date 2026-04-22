@@ -14,9 +14,11 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var ErrKwebUnreachable = errors.New("kweb is unreachable")
-var ErrConflict = errors.New("resource already exists")
-var ErrNotFound = errors.New("resource not found in kweb")
+var (
+	ErrKwebUnreachable = errors.New("kweb is unreachable")
+	ErrConflict        = errors.New("resource already exists")
+	ErrNotFound        = errors.New("resource not found in kweb")
+)
 
 type KwebError struct {
 	StatusCode int
@@ -46,12 +48,12 @@ type VMInfo struct {
 }
 
 type ClusterInfo struct {
-	Name        string `json:"name"`
-	Status      string `json:"status,omitempty"`
-	Version     string `json:"version,omitempty"`
-	ClusterType string `json:"type,omitempty"`
-	Plan        string `json:"plan,omitempty"`
-	VMs         string `json:"vms,omitempty"`
+	Name        string     `json:"name"`
+	Status      string     `json:"status,omitempty"`
+	Version     string     `json:"version,omitempty"`
+	ClusterType string     `json:"type,omitempty"`
+	Plan        string     `json:"plan,omitempty"`
+	VMs         string     `json:"vms,omitempty"`
 	Nodes       [][]string `json:"nodes,omitempty"`
 }
 
@@ -140,7 +142,7 @@ func (c *Client) ListProfiles(ctx context.Context) ([]string, error) {
 
 func (c *Client) CreateCluster(ctx context.Context, name, clusterType string, params map[string]interface{}) error {
 	body := map[string]interface{}{
-		"cluster": name,
+		"cluster":  name,
 		"kubetype": clusterType,
 	}
 	for k, v := range params {
@@ -234,8 +236,8 @@ func (c *Client) CheckHealth(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, ErrKwebUnreachable
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode == http.StatusOK {
 		return true, nil
@@ -266,7 +268,7 @@ func (c *Client) doPost(ctx context.Context, path string, body interface{}) erro
 	if err != nil {
 		return ErrKwebUnreachable
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return c.parseResponse(resp)
 }
@@ -288,7 +290,7 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, ErrKwebUnreachable
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -318,7 +320,7 @@ func (c *Client) doDelete(ctx context.Context, path string) error {
 	if err != nil {
 		return ErrKwebUnreachable
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return c.parseResponse(resp)
 }

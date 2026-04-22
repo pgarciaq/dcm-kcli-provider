@@ -8,20 +8,19 @@ import (
 const provisioningThreshold = 10 * time.Minute
 
 func MapVMStatus(kwebStatus string, createdAt time.Time) string {
-	status := strings.ToLower(kwebStatus)
-	switch {
-	case status == "up":
+	switch strings.ToLower(kwebStatus) {
+	case "up":
 		return "RUNNING"
-	case status == "down":
+	case "down":
 		if time.Since(createdAt) < provisioningThreshold {
 			return "PROVISIONING"
 		}
 		return "STOPPED"
-	case status == "paused":
+	case "paused":
 		return "PAUSED"
-	case status == "error" || status == "crashed" || status == "nostate":
+	case "error", "crashed", "nostate":
 		return "ERROR"
-	case status == "shuttingdown":
+	case "shuttingdown":
 		return "STOPPING"
 	default:
 		return "ERROR"

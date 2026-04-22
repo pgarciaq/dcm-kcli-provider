@@ -81,7 +81,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, fmt.Errorf("resolving post paths from OpenAPI spec: %w", err)
 	}
 	baseURL := "/api/v1alpha1"
-	vmSuffix := postPaths["vm"]       // "/vms"
+	vmSuffix := postPaths["vm"]           // "/vms"
 	clusterSuffix := postPaths["cluster"] // "/clusters"
 
 	vmProviderCfg := registration.ProviderConfig{
@@ -170,11 +170,12 @@ func (s *Server) Start(ctx context.Context) error {
 	s.logger.Info("self-probe succeeded")
 
 	profiles, err := s.kwebClient.ListProfiles(ctx)
-	if err != nil {
+	switch {
+	case err != nil:
 		s.logger.Warn("failed to list kweb profiles on startup", "error", err)
-	} else if len(profiles) == 0 {
+	case len(profiles) == 0:
 		s.logger.Warn("no VM profiles configured in kweb")
-	} else {
+	default:
 		s.logger.Info("available kweb VM profiles", "profiles", profiles)
 	}
 

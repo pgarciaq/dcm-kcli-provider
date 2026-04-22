@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	chimw "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -53,7 +53,6 @@ func (s *slogSafeBuffer) String() string {
 }
 
 var _ = Describe("Lifecycle", func() {
-
 	It("starts, self-probes /health, then registration begins", func() {
 		var registrationReceived atomic.Int32
 		spmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -308,11 +307,11 @@ var _ = Describe("Lifecycle", func() {
 
 		Eventually(func() string {
 			return buf.String()
-		}).WithTimeout(5*time.Second).WithPolling(50*time.Millisecond).Should(ContainSubstring("HTTP server listening"))
+		}).WithTimeout(5 * time.Second).WithPolling(50 * time.Millisecond).Should(ContainSubstring("HTTP server listening"))
 
 		Eventually(func() string {
 			return buf.String()
-		}).WithTimeout(5*time.Second).WithPolling(50*time.Millisecond).Should(ContainSubstring("self-probe succeeded"))
+		}).WithTimeout(5 * time.Second).WithPolling(50 * time.Millisecond).Should(ContainSubstring("self-probe succeeded"))
 
 		cancel()
 
