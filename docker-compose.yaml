@@ -1,3 +1,8 @@
+# Local dev stack: kweb + kcli provider.
+# SPM is NOT included here. For the full DCM stack (gateway, SPM,
+# catalog-manager, policy-manager, placement-manager), use the
+# api-gateway/compose.yaml from the dcm-project/api-gateway repo and
+# point SPM_URL at it.
 services:
   kweb:
     image: quay.io/karmab/kcli:latest
@@ -18,7 +23,9 @@ services:
       - "8080:8080"
     environment:
       KWEB_URL: http://kweb:8000
-      SPM_URL: http://spm:8080
+      # SPM_URL must point to a running SPM instance. Registration retries
+      # in the background, so the provider starts even if SPM is unreachable.
+      SPM_URL: ${SPM_URL:-http://host.containers.internal:9080/api/v1alpha1}
       LISTEN_ADDRESS: ":8080"
       STATE_STORE_PATH: /data/state.db
       LOG_LEVEL: info

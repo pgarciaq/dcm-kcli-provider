@@ -1,0 +1,561 @@
+openapi: 3.0.4
+info:
+  title: kcli Service Provider API
+  description: DCM kcli Service Provider for VM and cluster lifecycle management via kweb
+  version: v1alpha1
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+servers:
+  - url: /api/v1alpha1
+tags:
+  - name: vm
+    description: Virtual Machine resource management
+  - name: cluster
+    description: Kubernetes cluster resource management
+  - name: health
+    description: Health check operations
+paths:
+  /clusters/health:
+    get:
+      tags: [health]
+      summary: Cluster service health check
+      operationId: getClusterHealth
+      description: Health check endpoint used by SPM for the cluster provider
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /clusters:
+    get:
+      tags: [cluster]
+      summary: List clusters
+      operationId: listClusters
+      parameters:
+        - name: max_page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: page_token
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterList'
+        default:
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags: [cluster]
+      summary: Create a cluster
+      operationId: createCluster
+      parameters:
+        - name: id
+          in: query
+          description: Client-specified instance ID for idempotent creation (provided by SPM)
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Cluster'
+      responses:
+        '201':
+          description: Cluster creation started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cluster'
+        '400':
+          description: Invalid input
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /clusters/{clusterId}:
+    get:
+      tags: [cluster]
+      summary: Get a cluster
+      operationId: getCluster
+      parameters:
+        - name: clusterId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Cluster'
+        '404':
+          description: Cluster not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [cluster]
+      summary: Delete a cluster
+      operationId: deleteCluster
+      parameters:
+        - name: clusterId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Cluster deleted
+        '404':
+          description: Cluster not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /health:
+    get:
+      tags: [health]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /vms/health:
+    get:
+      tags: [health]
+      summary: VM service health check
+      operationId: getVMHealth
+      description: Health check endpoint used by SPM for the VM provider
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Service is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+  /vms:
+    get:
+      tags: [vm]
+      summary: List VMs
+      operationId: listVMs
+      parameters:
+        - name: max_page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: page_token
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VMList'
+        default:
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    post:
+      tags: [vm]
+      summary: Create a VM
+      operationId: createVM
+      parameters:
+        - name: id
+          in: query
+          description: Client-specified instance ID for idempotent creation (provided by SPM)
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VM'
+      responses:
+        '201':
+          description: VM created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VM'
+        '400':
+          description: Invalid input
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: Conflict
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /vms/{vmId}:
+    get:
+      tags: [vm]
+      summary: Get a VM
+      operationId: getVM
+      parameters:
+        - name: vmId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VM'
+        '404':
+          description: VM not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [vm]
+      summary: Delete a VM
+      operationId: deleteVM
+      parameters:
+        - name: vmId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: VM deleted
+        '404':
+          description: VM not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  schemas:
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [pass, fail]
+        version:
+          type: string
+        uptime:
+          type: number
+          format: float
+        message:
+          type: string
+    Error:
+      type: object
+      description: RFC 7807 compliant error response
+      required:
+        - type
+        - title
+      properties:
+        type:
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+
+    # --- VM resource ---
+
+    VM:
+      type: object
+      description: Virtual Machine resource
+      required:
+        - spec
+      properties:
+        id:
+          type: string
+          readOnly: true
+        status:
+          type: string
+          readOnly: true
+        path:
+          type: string
+          readOnly: true
+          description: Resource path (e.g. vms/{id})
+        spec:
+          $ref: '#/components/schemas/VMSpec'
+
+    VMSpec:
+      type: object
+      description: Provider-agnostic VM specification aligned with the DCM catalog VMSpec
+      required:
+        - service_type
+      properties:
+        service_type:
+          type: string
+          enum: [vm]
+        metadata:
+          $ref: '#/components/schemas/ServiceMetadata'
+        vcpu:
+          $ref: '#/components/schemas/Vcpu'
+        memory:
+          $ref: '#/components/schemas/Memory'
+        storage:
+          $ref: '#/components/schemas/Storage'
+        guest_os:
+          $ref: '#/components/schemas/GuestOS'
+        access:
+          $ref: '#/components/schemas/Access'
+        provider_hints:
+          $ref: '#/components/schemas/ProviderHints'
+      additionalProperties: true
+
+    VMList:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/VM'
+        next_page_token:
+          type: string
+
+    # --- Cluster resource ---
+
+    Cluster:
+      type: object
+      description: Kubernetes cluster resource
+      required:
+        - spec
+      properties:
+        id:
+          type: string
+          readOnly: true
+        status:
+          type: string
+          readOnly: true
+        path:
+          type: string
+          readOnly: true
+          description: Resource path (e.g. clusters/{id})
+        spec:
+          $ref: '#/components/schemas/ClusterSpec'
+
+    ClusterSpec:
+      type: object
+      description: Provider-agnostic cluster specification aligned with the DCM catalog ClusterSpec
+      required:
+        - service_type
+      properties:
+        service_type:
+          type: string
+          enum: [cluster]
+        metadata:
+          $ref: '#/components/schemas/ServiceMetadata'
+        version:
+          type: string
+          description: Kubernetes version (e.g. 1.30)
+        nodes:
+          $ref: '#/components/schemas/Nodes'
+        provider_hints:
+          $ref: '#/components/schemas/ProviderHints'
+      additionalProperties: true
+
+    ClusterList:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cluster'
+        next_page_token:
+          type: string
+
+    # --- Shared types ---
+
+    ServiceMetadata:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+          minLength: 1
+          maxLength: 63
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+
+    Memory:
+      type: object
+      required:
+        - size
+      properties:
+        size:
+          type: string
+          description: Memory size with unit suffix (MB, GB, TB)
+          pattern: ^[0-9]+(MB|GB|TB)$
+
+    Vcpu:
+      type: object
+      properties:
+        count:
+          type: integer
+          minimum: 1
+
+    GuestOS:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          description: OS identifier mapped to a kcli profile (e.g. fedora-39, rhel-9)
+
+    Access:
+      type: object
+      properties:
+        ssh_public_key:
+          type: string
+
+    Storage:
+      type: object
+      properties:
+        disks:
+          type: array
+          items:
+            $ref: '#/components/schemas/Disk'
+
+    Disk:
+      type: object
+      required:
+        - name
+        - capacity
+      properties:
+        name:
+          type: string
+          pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+        capacity:
+          type: string
+          description: Disk capacity with unit suffix (MB, GB, TB)
+          pattern: ^[0-9]+(MB|GB|TB)$
+
+    Nodes:
+      type: object
+      properties:
+        control_plane:
+          $ref: '#/components/schemas/ControlPlaneNodes'
+        workers:
+          $ref: '#/components/schemas/WorkerNodes'
+
+    ControlPlaneNodes:
+      type: object
+      properties:
+        count:
+          type: integer
+          enum: [1, 3, 5]
+
+    WorkerNodes:
+      type: object
+      properties:
+        count:
+          type: integer
+          minimum: 1
+
+    ProviderHints:
+      type: object
+      description: Provider-specific configuration (e.g. kcli profile overrides)
+      additionalProperties: true

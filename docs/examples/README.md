@@ -64,18 +64,20 @@ curl -X POST "http://localhost:9080/api/v1alpha1/catalog-item-instances?id=my-vm
   }'
 ```
 
-> **Note:** The kcli SP now implements the SPM generic resource protocol
-> (`POST {endpoint}?id=...` with `{"spec": <CatalogSpec>}` body). The
-> full DCM flow (catalog → placement → policy → SPM → SP) should work
-> once catalog items and policies are configured. Direct SP API calls
-> also work (e.g. `POST /api/v1alpha1/vms` with `{"spec": {...}}`).
+In the full DCM flow, SPM sends `POST {endpoint}?id=<uuid>` with a
+`{"spec": <resolved_spec>}` body to the kcli SP. The `metadata` field is
+typically absent (catalog-manager does not include it unless the catalog
+item defines a `metadata.name` field). The SP derives the kcli resource
+name from the `?id=` parameter when `metadata.name` is missing.
 
 ### 4. Direct SP API calls (without the DCM control plane)
 
-You can also call the kcli SP directly, bypassing catalog/placement/policy:
+You can also call the kcli SP directly, bypassing catalog/placement/policy.
+The `?id=` query parameter is optional — if omitted, the SP generates a UUID.
+`metadata` and `guest_os` are optional; only `service_type` is required.
 
 ```bash
-# Create a VM
+# Create a VM (with metadata — name is used as kcli VM name)
 curl -X POST "http://localhost:8080/api/v1alpha1/vms?id=my-vm-id" \
   -H "Content-Type: application/json" \
   -d '{
@@ -84,6 +86,18 @@ curl -X POST "http://localhost:8080/api/v1alpha1/vms?id=my-vm-id" \
       "metadata": {"name": "my-fedora"},
       "guest_os": {"type": "fedora-39"},
       "memory": {"size": "4GB"},
+      "vcpu": {"count": 2}
+    }
+  }'
+
+# Create a VM (catalog style — no metadata, name from ?id=)
+curl -X POST "http://localhost:8080/api/v1alpha1/vms?id=my-catalog-vm" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "spec": {
+      "service_type": "vm",
+      "guest_os": {"type": "fedora41"},
+      "memory": {"size": "2GB"},
       "vcpu": {"count": 2}
     }
   }'
@@ -105,8 +119,6 @@ curl -X POST "http://localhost:8080/api/v1alpha1/clusters?id=my-cluster-id" \
     }
   }'
 ```
-
-The `?id=` query parameter is optional — if omitted, the SP generates a UUID.
 
 ## Customization
 

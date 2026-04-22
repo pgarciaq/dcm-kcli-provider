@@ -360,25 +360,27 @@ groups are served by the same HTTP server on the same port.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | /api/v1alpha1/vms | Create a new VM |
+| POST | /api/v1alpha1/vms?id={instanceId} | Create a new VM (optional `?id=` for idempotent creation) |
 | GET | /api/v1alpha1/vms | List all VMs |
 | GET | /api/v1alpha1/vms/{vmId} | Get a VM instance |
 | DELETE | /api/v1alpha1/vms/{vmId} | Delete a VM instance |
+| GET | /api/v1alpha1/vms/health | VM service health check (used by SPM) |
 
 #### Cluster Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | /api/v1alpha1/clusters | Create a new cluster |
+| POST | /api/v1alpha1/clusters?id={instanceId} | Create a new cluster (optional `?id=` for idempotent creation) |
 | GET | /api/v1alpha1/clusters | List all clusters |
 | GET | /api/v1alpha1/clusters/{clusterId} | Get a cluster instance |
 | DELETE | /api/v1alpha1/clusters/{clusterId} | Delete a cluster |
+| GET | /api/v1alpha1/clusters/health | Cluster service health check (used by SPM) |
 
 #### Common Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | /health | SP health check (root path per DCM contract) |
+| GET | /api/v1alpha1/health | SP health check |
 
 ##### AEP Compliance
 
@@ -414,37 +416,60 @@ explanation of the error. The `instance` field contains the request path.
 
 #### POST /api/v1alpha1/vms — Create a VM
 
-The POST endpoint follows the contract defined in the VM schema spec
-pre-defined by DCM core. See
-[VM Schema](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-type-definitions/service-type-definitions.md).
-The SP translates the DCM VM request into a kweb `POST /vms` call.
+The POST endpoint accepts a `{"spec": <VMSpec>}` wrapper following the SPM
+generic resource protocol. The optional `?id=` query parameter allows SPM
+to provide a stable instance ID for idempotent creation; if absent, the SP
+generates a UUID.
 
-The SP generates a `dcm-instance-id` UUID for tracking and includes it in
-its internal state. Since kweb does not support arbitrary labels or metadata
-on VMs, the SP maintains an internal mapping between `dcm-instance-id` and
-kcli VM names. This differs from the Kubernetes-based SPs (KubeVirt, K8s
-Container) which label managed resources with `managed-by=dcm` and
-`dcm-instance-id` directly on the CRs.
+The SP translates the DCM VM request into a kweb `POST /vms` call. Since
+kweb does not support arbitrary labels or metadata on VMs, the SP maintains
+an internal mapping between the instance ID and the kcli VM name. This
+differs from the Kubernetes-based SPs (KubeVirt, K8s Container) which label
+managed resources with `managed-by=dcm` and `dcm-instance-id` directly on
+the CRs.
 
-**Name prefixing:** The SP prefixes all kcli resource names with `dcm-`
-(e.g., a VM with `metadata.name: "web-server"` becomes `dcm-web-server`
-in kweb). This prevents name collisions with resources created directly
-through `kcli` CLI or other tools sharing the same kweb backend. The
-internal state store maps the DCM instance ID to the prefixed kcli name.
-The original user-facing name is preserved in DCM API responses.
+**Name resolution:** The kcli VM name is derived from (in order of
+precedence): `spec.metadata.name`, then the `?id=` query parameter, then a
+generated short UUID. The name is prefixed with `dcm-` to prevent
+collisions with resources created directly through `kcli` CLI. In the full
+DCM catalog flow, `metadata` is typically absent (catalog-manager does not
+include it in the resolved spec), so the SPM-provided instance ID is used
+as the kcli name.
 
-Example request payload:
+**Profile resolution:** The kcli profile is resolved from (in order of
+precedence): `spec.provider_hints.kcli.profile`, then `spec.guest_os.type`,
+then a default of `fedora41`. The `provider_hints` mechanism allows catalog
+items to pass kcli-specific configuration without polluting the
+provider-agnostic catalog spec.
+
+Example request payload (direct SP call with metadata):
 
 ```json
+POST /api/v1alpha1/vms?id=my-vm-id
+
 {
-  "memory": { "size": "4GB" },
-  "vcpu": { "count": 2 },
-  "guestOS": { "type": "fedora-39" },
-  "access": {
-    "sshPublicKey": "ssh-ed25519 AAAAC3..."
-  },
-  "metadata": { "name": "web-server" },
-  "serviceType": "vm"
+  "spec": {
+    "service_type": "vm",
+    "metadata": { "name": "web-server" },
+    "guest_os": { "type": "fedora-39" },
+    "memory": { "size": "4GB" },
+    "vcpu": { "count": 2 }
+  }
+}
+```
+
+Example request payload (catalog flow — SPM sends without metadata):
+
+```json
+POST /api/v1alpha1/vms?id=694347de-0bc4-438b-834d-91402d46c98f
+
+{
+  "spec": {
+    "service_type": "vm",
+    "guest_os": { "type": "fedora41" },
+    "memory": { "size": "2GB" },
+    "vcpu": { "count": 2 }
+  }
 }
 ```
 
@@ -452,9 +477,10 @@ Example response payload (201 Created):
 
 ```json
 {
-  "id": "123e4567-e89b-12d3-a456-426614174000",
-  "name": "web-server",
-  "status": "PROVISIONING"
+  "id": "694347de-0bc4-438b-834d-91402d46c98f",
+  "status": "PROVISIONING",
+  "path": "vms/694347de-0bc4-438b-834d-91402d46c98f",
+  "spec": { ... }
 }
 ```
 
@@ -464,17 +490,12 @@ handler requires both a `name` and a `profile` field. Additional parameters
 
 ```json
 {
-  "name": "dcm-web-server",
-  "profile": "fedora-39",
-  "parameters[memory]": 4096,
-  "parameters[numcpus]": 2,
-  "parameters[keys]": ["ssh-ed25519 AAAAC3..."]
+  "name": "dcm-694347de-0bc4-438b-834d-91402d46c98f",
+  "profile": "fedora41",
+  "parameters[memory]": 2048,
+  "parameters[numcpus]": 2
 }
 ```
-
-The `profile` field maps to a kcli VM profile that defines the base image,
-disk layout, and default parameters. The SP maps the DCM `guestOS.type`
-field to the appropriate kcli profile name.
 
 On startup, the SP calls `GET /vmprofiles` on kweb and caches the
 available profile names. If no profiles are configured, the SP logs a
@@ -486,10 +507,10 @@ than forwarding to kweb and receiving an opaque error.
 
 **Error Handling:**
 
-- **400 Bad Request**: Invalid request payload, missing required fields,
+- **400 Bad Request**: Invalid request payload, missing `service_type`,
   or unknown profile (e.g., "profile 'fedora-39' not found; available
   profiles: centos, ubuntu-22.04").
-- **409 Conflict**: VM with the same `metadata.name` already exists in kweb.
+- **409 Conflict**: VM with the same kcli name already exists in kweb.
 - **500 Internal Server Error**: Unexpected error from kweb during
   creation.
 - **502 Bad Gateway**: kweb is unreachable or returned a non-JSON error.
@@ -498,19 +519,31 @@ than forwarding to kweb and receiving an opaque error.
 
 The SP translates the DCM cluster request into a kweb `POST /kubes` call.
 Cluster creation is asynchronous on the kweb side; the SP returns `CREATING`
-immediately and polls kweb for completion. The same `dcm-` name prefix
-applies to clusters (e.g., `metadata.name: "edge-cluster"` becomes
-`dcm-edge-cluster` in kweb).
+immediately and polls kweb for completion. The same `dcm-` name prefix and
+name resolution logic applies (see VM section above).
 
-Example request payload:
+**Cluster type resolution:** The kcli cluster type is resolved from
+`spec.provider_hints.kcli.cluster_type`, defaulting to `"generic"`. Since
+the catalog `ClusterSpec` does not have a `cluster_type` field,
+`provider_hints` is the primary mechanism to select the type.
+
+Example request payload (direct SP call with metadata):
 
 ```json
+POST /api/v1alpha1/clusters?id=my-cluster-id
+
 {
-  "clusterType": "k3s",
-  "controlPlane": { "count": 1 },
-  "workers": { "count": 2 },
-  "metadata": { "name": "edge-cluster" },
-  "serviceType": "cluster"
+  "spec": {
+    "service_type": "cluster",
+    "metadata": { "name": "edge-cluster" },
+    "nodes": {
+      "control_plane": { "count": 1 },
+      "workers": { "count": 2 }
+    },
+    "provider_hints": {
+      "kcli": { "cluster_type": "k3s" }
+    }
+  }
 }
 ```
 
@@ -518,9 +551,10 @@ Example response payload (201 Created):
 
 ```json
 {
-  "id": "456e7890-e89b-12d3-a456-426614174001",
-  "name": "edge-cluster",
-  "status": "CREATING"
+  "id": "my-cluster-id",
+  "status": "CREATING",
+  "path": "clusters/my-cluster-id",
+  "spec": { ... }
 }
 ```
 

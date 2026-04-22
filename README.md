@@ -32,6 +32,42 @@ Kubernetes CRDs — this provider communicates with kcli's kweb HTTP API. This
 makes it ideal for developers and homelab operators who want to manage VMs and
 clusters through DCM without deploying a Kubernetes management stack.
 
+## API
+
+The SP exposes an OpenAPI 3.0 API under `/api/v1alpha1`. The full spec is in
+[`api/v1alpha1/openapi.yaml`](api/v1alpha1/openapi.yaml).
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /api/v1alpha1/vms?id={id} | Create a VM (`?id=` optional) |
+| GET | /api/v1alpha1/vms | List VMs |
+| GET | /api/v1alpha1/vms/{vmId} | Get a VM |
+| DELETE | /api/v1alpha1/vms/{vmId} | Delete a VM |
+| POST | /api/v1alpha1/clusters?id={id} | Create a cluster (`?id=` optional) |
+| GET | /api/v1alpha1/clusters | List clusters |
+| GET | /api/v1alpha1/clusters/{clusterId} | Get a cluster |
+| DELETE | /api/v1alpha1/clusters/{clusterId} | Delete a cluster |
+| GET | /api/v1alpha1/health | SP health check |
+| GET | /api/v1alpha1/vms/health | VM service health (used by SPM) |
+| GET | /api/v1alpha1/clusters/health | Cluster service health (used by SPM) |
+
+### Request Format
+
+Create requests use a `{"spec": <CatalogSpec>}` envelope aligned with the
+SPM generic resource protocol. Only `service_type` is required in the spec;
+`metadata`, `guest_os`, and other fields are optional.
+
+```bash
+curl -X POST "http://localhost:8080/api/v1alpha1/vms?id=my-vm" \
+  -H "Content-Type: application/json" \
+  -d '{"spec":{"service_type":"vm","guest_os":{"type":"fedora41"},"memory":{"size":"2GB"}}}'
+```
+
+See [`docs/examples/`](docs/examples/) for full DCM flow examples (catalog
+items, policies, and catalog-item-instances).
+
 ## Architecture
 
 ![Architecture Overview](docs/architecture-overview.svg)

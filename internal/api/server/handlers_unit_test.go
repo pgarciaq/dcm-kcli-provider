@@ -110,6 +110,35 @@ func withNodes(ctlplanes, workers int) func(map[string]interface{}) {
 	}
 }
 
+// vmBodyCatalogStyle builds a body without metadata (as sent by SPM via catalog flow).
+func vmBodyCatalogStyle(guestOS string, opts ...func(map[string]interface{})) string {
+	spec := map[string]interface{}{
+		"service_type": "vm",
+	}
+	if guestOS != "" {
+		spec["guest_os"] = map[string]interface{}{"type": guestOS}
+	}
+	for _, opt := range opts {
+		opt(spec)
+	}
+	body := map[string]interface{}{"spec": spec}
+	b, _ := json.Marshal(body)
+	return string(b)
+}
+
+// clusterBodyCatalogStyle builds a body without metadata (as sent by SPM via catalog flow).
+func clusterBodyCatalogStyle(opts ...func(map[string]interface{})) string {
+	spec := map[string]interface{}{
+		"service_type": "cluster",
+	}
+	for _, opt := range opts {
+		opt(spec)
+	}
+	body := map[string]interface{}{"spec": spec}
+	b, _ := json.Marshal(body)
+	return string(b)
+}
+
 var _ = Describe("Handlers", func() {
 	var (
 		kwebMock  *mockKweb
@@ -559,9 +588,9 @@ var _ = Describe("Handlers", func() {
 
 	// ====== HTTP hardening ======
 
-	It("C-58: returns 400 when required fields are missing from VM create", func() {
+	It("C-58: returns 400 when spec is missing from VM create body", func() {
 		validationRouter := buildRouterWithValidation(impl)
-		body := `{"spec": {"service_type": "vm"}}`
+		body := `{"not_spec": "invalid"}`
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -814,5 +843,103 @@ var _ = Describe("Handlers", func() {
 		json.Unmarshal(w.Body.Bytes(), &pd)
 		Expect(pd["detail"].(string)).To(Equal("failed to persist cluster state"))
 		Expect(kwebMock.deleteClusterCalled).To(BeTrue())
+	})
+
+	// ====== Optional metadata / catalog-style bodies (BUG-002) ======
+
+	It("creates VM without metadata when ?id is provided (catalog flow)", func() {
+		body := vmBodyCatalogStyle("fedora-39", withMemory("2GB"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=spm-instance-123", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"]).To(Equal("spm-instance-123"))
+
+		entries := storeMock.allEntries()
+		Expect(entries).To(HaveLen(1))
+		Expect(entries[0].KcliName).To(Equal("dcm-spm-instance-123"))
+	})
+
+	It("creates VM without metadata or ?id, generates short UUID name", func() {
+		body := vmBodyCatalogStyle("fedora-39", withMemory("2GB"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		entries := storeMock.allEntries()
+		Expect(entries).To(HaveLen(1))
+		Expect(entries[0].KcliName).To(HavePrefix("dcm-"))
+		Expect(len(entries[0].KcliName)).To(BeNumerically(">=", 12))
+	})
+
+	It("creates VM without guest_os, defaults to fedora41 profile", func() {
+		profiles.profiles = append(profiles.profiles, "fedora41")
+		body := vmBodyCatalogStyle("")
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=no-os-vm", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+	})
+
+	It("passes OpenAPI validation with only service_type in VM spec", func() {
+		validationRouter := buildRouterWithValidation(impl)
+		profiles.profiles = append(profiles.profiles, "fedora41")
+		body := vmBodyCatalogStyle("")
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=minimal-vm", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		validationRouter.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+	})
+
+	It("creates cluster without metadata when ?id is provided (catalog flow)", func() {
+		body := clusterBodyCatalogStyle(withClusterType("k3s"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters?id=spm-cluster-456", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"]).To(Equal("spm-cluster-456"))
+
+		entries := storeMock.allEntries()
+		Expect(entries).To(HaveLen(1))
+		Expect(entries[0].KcliName).To(Equal("dcm-spm-cluster-456"))
+	})
+
+	It("creates cluster without metadata or ?id, generates short UUID name", func() {
+		body := clusterBodyCatalogStyle(withClusterType("k3s"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		entries := storeMock.allEntries()
+		Expect(entries).To(HaveLen(1))
+		Expect(entries[0].KcliName).To(HavePrefix("dcm-"))
+		Expect(len(entries[0].KcliName)).To(BeNumerically(">=", 12))
+	})
+
+	It("metadata.name takes precedence over ?id for kcli name", func() {
+		body := vmBody("explicit-name", "fedora-39", withMemory("2GB"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=spm-provided-id", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"]).To(Equal("spm-provided-id"))
+
+		entries := storeMock.allEntries()
+		Expect(entries).To(HaveLen(1))
+		Expect(entries[0].KcliName).To(Equal("dcm-explicit-name"))
 	})
 })
