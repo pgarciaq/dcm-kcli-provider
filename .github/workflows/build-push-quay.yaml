@@ -15,6 +15,7 @@ jobs:
     uses: dcm-project/shared-workflows/.github/workflows/build-push-quay.yaml@main
     with:
       image-name: dcm-kcli-provider
+      registry: quay.io/pgarciaq
       version: ${{ github.event.inputs.version }}
     secrets:
       quay-username: ${{ secrets.QUAY_USERNAME }}
