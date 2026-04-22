@@ -419,7 +419,11 @@ explanation of the error. The `instance` field contains the request path.
 The POST endpoint accepts a `{"spec": <VMSpec>}` wrapper following the SPM
 generic resource protocol. The optional `?id=` query parameter allows SPM
 to provide a stable instance ID for idempotent creation; if absent, the SP
-generates a UUID.
+generates a UUID. The `?id=` parameter is constrained to the pattern
+`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$` (maxLength 253) to prevent
+URL path injection. If the `?id=` matches an existing resource in the
+store, the SP returns the existing resource (201) without calling kweb,
+making retries safe.
 
 The SP translates the DCM VM request into a kweb `POST /vms` call. Since
 kweb does not support arbitrary labels or metadata on VMs, the SP maintains
@@ -577,6 +581,8 @@ implementation has no handler for it — sending `kind` causes an
 
 - **400 Bad Request**: Invalid payload, missing fields, or unsupported
   cluster type (including `kind`).
+- **409 Conflict**: Cluster with the same kcli name already exists in
+  kweb.
 - **500 Internal Server Error**: Unexpected error from kweb.
 - **502 Bad Gateway**: kweb is unreachable.
 
@@ -1141,6 +1147,11 @@ items were audited and intentionally deferred:
 | SPM generic resource protocol implemented | The kcli SP now implements the SPM protocol: `POST {endpoint}?id=...` with `{"spec": <CatalogSpec>}` body, `DELETE {endpoint}/{id}`, and `GET {endpoint}/health`. Registration endpoints point to collection URLs (`/api/v1alpha1/vms`, `/api/v1alpha1/clusters`). The API schema was aligned with the catalog VMSpec/ClusterSpec (breaking change from the original flat request format). |
 | OpenAPI validator middleware vs base URL | The `nethttpmiddleware.OapiRequestValidatorWithOptions` middleware is wired on the chi router and works correctly with the `servers[0].url` base path from the OpenAPI spec. Earlier attempts to combine it with `HandlerWithOptions` caused path mismatches; the current approach (middleware on router, then `HandlerFromMuxWithBaseURL`) follows the kubevirt-service-provider pattern and works. |
 | Store migrations list is empty | `store.go` has a schema versioning framework with `currentSchemaVersion = 1` and a `runMigrations` hook. No migrations exist yet because the schema has not changed. When the schema evolves, migrations are added to the `migrations` slice. |
+| No authentication on SP API | Consistent with all DCM peer SPs (KubeVirt, k8s-container). Authentication is delegated to the network layer (gateway, mesh, reverse proxy) per the trusted-network deployment model. |
+| Error detail may expose kweb internals | `err.Error()` from kweb flows through to the RFC 7807 `detail` field. Acceptable for homelab/dev use; production deployments should use a reverse proxy. |
+| Crash window between kweb create and store.Put | A crash after kweb accepts the create but before `store.Put` leaves an orphan in kweb. The monitor's orphan detection (VM-only) will log it. Acceptable trade-off vs. two-phase commit complexity. |
+| No inbound rate limiting | Consistent with peer SPs. The kweb client has outbound rate limiting (10 req/s, burst 20). |
+| Pagination uses bbolt key order | Page ordering is by bbolt key (lexicographic), not user-controlled. Acceptable for v1 at homelab scale. |
 
 ### Upgrade / Downgrade Strategy
 
@@ -1190,6 +1201,17 @@ On downgrade:
   `id`, `status`, and `path` at top level for SPM compatibility. Cluster
   type resolved via `provider_hints.kcli.cluster_type`. VM profile
   overridable via `provider_hints.kcli.profile`.
+- 2026-04-22: Adversarial due diligence review (security, correctness,
+  operations, design). Fixes applied: (1) cluster create now returns
+  409 on conflict (was 500); (2) `?id=` query param constrained to
+  `^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$` with maxLength 253
+  to prevent URL path injection; (3) kweb client uses `url.PathEscape`
+  on resource names for defense-in-depth; (4) `ListVMs` now enriches
+  IPs from kweb data and degrades gracefully on non-unreachable kweb
+  errors (was dead code); (5) create endpoints are idempotent — retries
+  with the same `?id=` return the existing resource instead of 409;
+  (6) rollback failures on `store.Put` errors are now logged instead
+  of silently swallowed. Added structured logger to handler layer.
 
 ## Drawbacks
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -99,7 +100,7 @@ func (c *Client) ListVMs(ctx context.Context) ([]VMInfo, error) {
 }
 
 func (c *Client) GetVM(ctx context.Context, name string) (*VMInfo, error) {
-	data, err := c.doGet(ctx, "/vms/"+name)
+	data, err := c.doGet(ctx, "/vms/"+url.PathEscape(name))
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +116,7 @@ func (c *Client) GetVM(ctx context.Context, name string) (*VMInfo, error) {
 }
 
 func (c *Client) DeleteVM(ctx context.Context, name string) error {
-	return c.doDelete(ctx, "/vms/"+name)
+	return c.doDelete(ctx, "/vms/"+url.PathEscape(name))
 }
 
 func (c *Client) ListProfiles(ctx context.Context) ([]string, error) {
@@ -180,7 +181,7 @@ func (c *Client) ListClusters(ctx context.Context) ([]ClusterInfo, error) {
 }
 
 func (c *Client) GetCluster(ctx context.Context, name string) (*ClusterInfo, error) {
-	data, err := c.doGet(ctx, "/kubes/"+name)
+	data, err := c.doGet(ctx, "/kubes/"+url.PathEscape(name))
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +214,7 @@ func (c *Client) GetCluster(ctx context.Context, name string) (*ClusterInfo, err
 }
 
 func (c *Client) DeleteCluster(ctx context.Context, name string) error {
-	return c.doDelete(ctx, "/kubes/"+name)
+	return c.doDelete(ctx, "/kubes/"+url.PathEscape(name))
 }
 
 func (c *Client) CheckHealth(ctx context.Context) (bool, error) {

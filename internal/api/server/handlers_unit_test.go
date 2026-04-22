@@ -927,6 +927,97 @@ var _ = Describe("Handlers", func() {
 		Expect(len(entries[0].KcliName)).To(BeNumerically(">=", 12))
 	})
 
+	// ====== Adversarial review fixes ======
+
+	It("returns 409 when cluster already exists (conflict from kweb)", func() {
+		kwebMock.createClusterErr = kweb.ErrConflict
+		body := clusterBody("dup-cl", withClusterType("k3s"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(409))
+		var pd map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &pd)
+		Expect(pd["detail"].(string)).To(ContainSubstring("already exists"))
+	})
+
+	It("ListVMs enriches IP from kweb data", func() {
+		storeMock.Put(store.ResourceEntry{ID: "vm-enrich", KcliName: "dcm-enriched", Type: "vm", Status: "RUNNING"})
+		kwebMock.listVMsResult = []kweb.VMInfo{
+			{Name: "dcm-enriched", Status: "up", IP: "10.0.0.42"},
+		}
+
+		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		results := resp["results"].([]interface{})
+		Expect(results).To(HaveLen(1))
+		vm := results[0].(map[string]interface{})
+		spec := vm["spec"].(map[string]interface{})
+		Expect(spec["ip"]).To(Equal("10.0.0.42"))
+	})
+
+	It("ListVMs degrades gracefully on non-unreachable kweb error", func() {
+		storeMock.Put(store.ResourceEntry{ID: "vm-degrade", KcliName: "dcm-deg", Type: "vm", Status: "RUNNING"})
+		kwebMock.listVMsErr = errors.New("kweb timeout or parse error")
+
+		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		results := resp["results"].([]interface{})
+		Expect(results).To(HaveLen(1))
+	})
+
+	It("idempotent VM create: returns existing resource when ?id= matches store entry", func() {
+		storeMock.Put(store.ResourceEntry{ID: "idem-vm-1", KcliName: "dcm-idem-vm-1", Type: "vm", Status: "RUNNING"})
+		kwebMock.createVMErr = errors.New("kweb should not be called")
+		body := vmBody("idem-vm", "fedora-39", withMemory("4GB"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=idem-vm-1", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"]).To(Equal("idem-vm-1"))
+		Expect(resp["status"]).To(Equal("RUNNING"))
+	})
+
+	It("idempotent cluster create: returns existing resource when ?id= matches store entry", func() {
+		storeMock.Put(store.ResourceEntry{ID: "idem-cl-1", KcliName: "dcm-idem-cl-1", Type: "cluster", Status: "ACTIVE"})
+		kwebMock.createClusterErr = errors.New("kweb should not be called")
+		body := clusterBody("idem-cl", withClusterType("k3s"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters?id=idem-cl-1", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"]).To(Equal("idem-cl-1"))
+		Expect(resp["status"]).To(Equal("ACTIVE"))
+	})
+
+	It("OpenAPI validation rejects ?id= with path-unsafe characters", func() {
+		validationRouter := buildRouterWithValidation(impl)
+		body := vmBody("safe-vm", "fedora-39", withMemory("4GB"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=foo/bar", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		validationRouter.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(400))
+	})
+
 	It("metadata.name takes precedence over ?id for kcli name", func() {
 		body := vmBody("explicit-name", "fedora-39", withMemory("2GB"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=spm-provided-id", bytes.NewBufferString(body))

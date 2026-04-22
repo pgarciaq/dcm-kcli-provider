@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,19 +63,32 @@ type StrictServerImpl struct {
 	store     StateStore
 	publisher events.Publisher
 	profiles  ProfileCache
+	logger    *slog.Logger
 	version   string
 	startedAt time.Time
 	createMu  sync.Mutex
 }
 
-func NewStrictServerImpl(k KwebClient, s StateStore, pub events.Publisher, profiles ProfileCache, version string) *StrictServerImpl {
-	return &StrictServerImpl{
+func NewStrictServerImpl(k KwebClient, s StateStore, pub events.Publisher, profiles ProfileCache, version string, opts ...func(*StrictServerImpl)) *StrictServerImpl {
+	impl := &StrictServerImpl{
 		kweb:      k,
 		store:     s,
 		publisher: pub,
 		profiles:  profiles,
+		logger:    slog.Default(),
 		version:   version,
 		startedAt: time.Now(),
+	}
+	for _, opt := range opts {
+		opt(impl)
+	}
+	return impl
+}
+
+// WithLogger sets a custom logger on the StrictServerImpl.
+func WithLogger(logger *slog.Logger) func(*StrictServerImpl) {
+	return func(s *StrictServerImpl) {
+		s.logger = logger
 	}
 }
 
@@ -166,6 +180,13 @@ func (s *StrictServerImpl) GetClusterHealth(ctx context.Context, _ GetClusterHea
 // --- VMs ---
 
 func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObject) (CreateVMResponseObject, error) {
+	if req.Params.Id != nil && *req.Params.Id != "" {
+		if existing, err := s.store.Get(*req.Params.Id); err == nil {
+			vm := entryToVM(*existing)
+			return CreateVM201JSONResponse(vm), nil
+		}
+	}
+
 	spec := req.Body.Spec
 
 	profile := resolveVMProfile(spec)
@@ -230,7 +251,9 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.store.Put(entry); err != nil {
-		_ = s.kweb.DeleteVM(ctx, kcliName)
+		if delErr := s.kweb.DeleteVM(ctx, kcliName); delErr != nil {
+			s.logger.Warn("rollback: failed to delete VM from kweb after store error", "vm", kcliName, "error", delErr)
+		}
 		return CreateVMdefaultApplicationProblemPlusJSONResponse{
 			Body:       problemError(500, "failed to persist VM state"),
 			StatusCode: 500,
@@ -274,13 +297,11 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 	}
 
 	kwebVMs, kwebErr := s.kweb.ListVMs(ctx)
-	if kwebErr != nil {
-		if errors.Is(kwebErr, kweb.ErrKwebUnreachable) {
-			return ListVMsdefaultApplicationProblemPlusJSONResponse{
-				Body:       problemError(502, "kweb is unreachable"),
-				StatusCode: 502,
-			}, nil
-		}
+	if kwebErr != nil && errors.Is(kwebErr, kweb.ErrKwebUnreachable) {
+		return ListVMsdefaultApplicationProblemPlusJSONResponse{
+			Body:       problemError(502, "kweb is unreachable"),
+			StatusCode: 502,
+		}, nil
 	}
 	kwebMap := make(map[string]kweb.VMInfo)
 	for _, vm := range kwebVMs {
@@ -289,7 +310,13 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 
 	results := make([]VM, 0, len(storeVMs))
 	for _, entry := range storeVMs {
-		results = append(results, entryToVM(entry))
+		vm := entryToVM(entry)
+		if kvm, ok := kwebMap[entry.KcliName]; ok && kvm.IP != "" {
+			vm.Spec.AdditionalProperties = map[string]interface{}{
+				"ip": kvm.IP,
+			}
+		}
+		results = append(results, vm)
 	}
 
 	if startIdx > len(results) {
@@ -383,6 +410,13 @@ func (s *StrictServerImpl) DeleteVM(ctx context.Context, req DeleteVMRequestObje
 // --- Clusters ---
 
 func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterRequestObject) (CreateClusterResponseObject, error) {
+	if req.Params.Id != nil && *req.Params.Id != "" {
+		if existing, err := s.store.Get(*req.Params.Id); err == nil {
+			cl := entryToCluster(*existing)
+			return CreateCluster201JSONResponse(cl), nil
+		}
+	}
+
 	spec := req.Body.Spec
 
 	ct := resolveClusterType(spec)
@@ -416,6 +450,11 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 	s.createMu.Unlock()
 
 	if createErr != nil {
+		if errors.Is(createErr, kweb.ErrConflict) {
+			return CreateCluster409ApplicationProblemPlusJSONResponse(
+				problemError(409, fmt.Sprintf("cluster '%s' already exists", strings.TrimPrefix(kcliName, dcmPrefix))),
+			), nil
+		}
 		if errors.Is(createErr, kweb.ErrKwebUnreachable) {
 			return CreateClusterdefaultApplicationProblemPlusJSONResponse{
 				Body:       problemError(502, "kweb is unreachable"),
@@ -437,7 +476,9 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.store.Put(entry); err != nil {
-		_ = s.kweb.DeleteCluster(ctx, kcliName)
+		if delErr := s.kweb.DeleteCluster(ctx, kcliName); delErr != nil {
+			s.logger.Warn("rollback: failed to delete cluster from kweb after store error", "cluster", kcliName, "error", delErr)
+		}
 		return CreateClusterdefaultApplicationProblemPlusJSONResponse{
 			Body:       problemError(500, "failed to persist cluster state"),
 			StatusCode: 500,

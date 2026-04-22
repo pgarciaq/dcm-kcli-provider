@@ -117,7 +117,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 	s.registrars = []*registration.Registrar{vmRegistrar, clusterRegistrar}
 
-	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version)
+	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version, apiserver.WithLogger(logger))
 	strictHandler := apiserver.NewStrictHandler(impl, nil)
 
 	swagger, err := apiv1alpha1.GetSwagger()

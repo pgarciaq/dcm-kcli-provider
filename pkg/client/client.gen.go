@@ -1412,6 +1412,7 @@ type CreateClusterResponse struct {
 	HTTPResponse                  *http.Response
 	JSON201                       *Cluster
 	ApplicationproblemJSON400     *Error
+	ApplicationproblemJSON409     *Error
 	ApplicationproblemJSONDefault *Error
 }
 
@@ -1817,6 +1818,13 @@ func ParseCreateClusterResponse(rsp *http.Response) (*CreateClusterResponse, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error
