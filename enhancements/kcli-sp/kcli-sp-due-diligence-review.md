@@ -33,6 +33,16 @@ findings total.
 > The original severity ratings are preserved below for reference if the
 > scope is ever expanded to production use.
 
+> **Peer SP comparison (2026-04-22):** A second review round compared the
+> proposal against the implemented peer SPs (`kubevirt-service-provider`,
+> `k8s-container-service-provider`, `acm-cluster-service-provider`) and the
+> full DCM enhancements repo. This identified 11 additional gaps now
+> addressed in the proposal: SP lifecycle (graceful shutdown, HTTP/client
+> timeouts), runtime OpenAPI validation, core NATS publishing (not
+> JetStream), RFC 7807 error format, startup readiness self-probe, cluster
+> creation timeout, profile validation via `GET /vmprofiles`, `dcm-` name
+> prefix for kcli resources, and missing cross-references.
+
 ---
 
 ## Security

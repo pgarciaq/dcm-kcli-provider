@@ -10,9 +10,11 @@ creation-date: 2026-04-17
 see-also:
   - "/enhancements/kubevirt-sp/kubevirt-sp.md"
   - "/enhancements/acm-cluster-sp/acm-cluster-sp.md"
+  - "/enhancements/k8s-container-sp/k8s-container-sp.md"
   - "/enhancements/sp-registration-flow/sp-registration-flow.md"
   - "/enhancements/service-provider-health-check/service-provider-health-check.md"
   - "/enhancements/state-management/service-provider-status-reporting.md"
+  - "/enhancements/service-provider-status-report-implementation/service-provider-status-report-implementation.md"
   - "/enhancements/service-type-definitions/service-type-definitions.md"
 ---
 
@@ -137,6 +139,12 @@ DCM workflows end-to-end without cloud infrastructure costs.
   the kcli SP binary.
 - The kweb instance has valid credentials for its configured backend (e.g.,
   libvirt socket access).
+- **VM profiles** must be configured in the kweb instance's
+  `~/.kcli/profiles.yml` before creating VMs through DCM. A kcli profile
+  is a named YAML entry that bundles VM settings (image, CPU, memory,
+  disks, networks, cloud-init commands). kweb requires a `profile` field
+  on every `POST /vms` request. The SP validates profile availability at
+  startup and on each VM create request via `GET /vmprofiles`.
 - The deployment is on a **trusted network** (homelab LAN, developer
   workstation, or CI runner). kweb has **no built-in authentication** and
   exposes destructive operations and sensitive data (cluster-admin
@@ -171,6 +179,7 @@ are:
 | DELETE | `/vms/{name}` | Delete a VM (returns HTTP 200) |
 | POST | `/vms/{name}/start` | Start a VM |
 | POST | `/vms/{name}/stop` | Stop a VM |
+| GET | `/vmprofiles` | List available VM profiles |
 
 **Cluster operations:**
 
@@ -251,6 +260,13 @@ enhancement:
 - VMs: `dcm.vm`
 - Clusters: `dcm.cluster`
 
+The SP publishes using **core NATS** (`nats.Conn.Publish`), not the
+JetStream publish API. The Service Provider Manager (SPRM) configures a
+JetStream stream on `dcm.*` subjects that captures these messages,
+providing at-least-once delivery on the consumer side. From the SP's
+perspective, publishing is fire-and-forget (at-most-once). This matches
+the pattern used by the K8s Container SP and ACM Cluster SP.
+
 Provider identity and instance identifiers are carried in the CloudEvent
 envelope attributes (`source`, `subject`), not in the NATS subject. This
 keeps routing simple and aligns with the canonical contract.
@@ -320,14 +336,18 @@ in the
 #### Registration Process
 
 1. The SP binary starts and initializes the HTTP listener.
-2. After the server is ready (via `WithOnReady` callback), registration runs
-   in background goroutines — one for VMs, one for clusters.
-3. Each registration request is sent to the DCM Service Provider Registry.
-4. On success, the SP is registered and available for DCM to route requests.
-5. Registration failures are retried with exponential backoff. Failures do
+2. The SP polls its own `GET /health` endpoint (with a 1s HTTP client
+   timeout) until it receives HTTP 200. This self-probe prevents
+   registration and the status monitor from racing against server startup.
+   Both peer SPs (KubeVirt, K8s Container) use the same pattern.
+3. After the self-probe succeeds, registration runs in background
+   goroutines — one for VMs, one for clusters.
+4. Each registration request is sent to the DCM Service Provider Registry.
+5. On success, the SP is registered and available for DCM to route requests.
+6. Registration failures are retried with exponential backoff. Failures do
    not block server startup. Alternatively, the SP can fall back to manual
    registration by an administrator.
-6. Both registrations share the same kweb backend; the `Endpoint` field
+7. Both registrations share the same kweb backend; the `Endpoint` field
    differs to route VM requests and cluster requests to different handler
    paths within the SP.
 
@@ -365,6 +385,33 @@ groups are served by the same HTTP server on the same port.
 All endpoints under `/api/v1alpha1/` are defined based on AEP standards and
 use `aep-openapi-linter` to check for compliance.
 
+##### Runtime Request Validation
+
+The SP uses `oapi-codegen`-generated strict handlers with kin-openapi
+request validation middleware on the Chi router, consistent with peer DCM
+providers (KubeVirt SP, K8s Container SP). Malformed requests are rejected
+at the middleware layer with a structured RFC 7807 response (see Error
+Response Format below) before reaching handler code.
+
+#### Error Response Format
+
+All error responses use [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807)
+`application/problem+json`, consistent with the K8s Container SP:
+
+```json
+{
+  "type": "about:blank",
+  "title": "Bad Request",
+  "status": 400,
+  "detail": "field 'memory.size' is required",
+  "instance": "/api/v1alpha1/vms"
+}
+```
+
+This format applies to all error status codes returned by the SP (400, 404,
+409, 500, 502, 504). The `detail` field provides a human-readable
+explanation of the error. The `instance` field contains the request path.
+
 #### POST /api/v1alpha1/vms — Create a VM
 
 The POST endpoint follows the contract defined in the VM schema spec
@@ -378,6 +425,13 @@ on VMs, the SP maintains an internal mapping between `dcm-instance-id` and
 kcli VM names. This differs from the Kubernetes-based SPs (KubeVirt, K8s
 Container) which label managed resources with `managed-by=dcm` and
 `dcm-instance-id` directly on the CRs.
+
+**Name prefixing:** The SP prefixes all kcli resource names with `dcm-`
+(e.g., a VM with `metadata.name: "web-server"` becomes `dcm-web-server`
+in kweb). This prevents name collisions with resources created directly
+through `kcli` CLI or other tools sharing the same kweb backend. The
+internal state store maps the DCM instance ID to the prefixed kcli name.
+The original user-facing name is preserved in DCM API responses.
 
 Example request payload:
 
@@ -410,7 +464,7 @@ handler requires both a `name` and a `profile` field. Additional parameters
 
 ```json
 {
-  "name": "web-server",
+  "name": "dcm-web-server",
   "profile": "fedora-39",
   "parameters[memory]": 4096,
   "parameters[numcpus]": 2,
@@ -422,9 +476,19 @@ The `profile` field maps to a kcli VM profile that defines the base image,
 disk layout, and default parameters. The SP maps the DCM `guestOS.type`
 field to the appropriate kcli profile name.
 
+On startup, the SP calls `GET /vmprofiles` on kweb and caches the
+available profile names. If no profiles are configured, the SP logs a
+warning. On each VM create request, the SP checks whether the requested
+profile exists in the cached list (refreshed periodically by the status
+monitor). If the profile does not exist, the SP returns a `400 Bad
+Request` with a descriptive message listing the available profiles, rather
+than forwarding to kweb and receiving an opaque error.
+
 **Error Handling:**
 
-- **400 Bad Request**: Invalid request payload or missing required fields.
+- **400 Bad Request**: Invalid request payload, missing required fields,
+  or unknown profile (e.g., "profile 'fedora-39' not found; available
+  profiles: centos, ubuntu-22.04").
 - **409 Conflict**: VM with the same `metadata.name` already exists in kweb.
 - **500 Internal Server Error**: Unexpected error from kweb during
   creation.
@@ -434,7 +498,9 @@ field to the appropriate kcli profile name.
 
 The SP translates the DCM cluster request into a kweb `POST /kubes` call.
 Cluster creation is asynchronous on the kweb side; the SP returns `CREATING`
-immediately and polls kweb for completion.
+immediately and polls kweb for completion. The same `dcm-` name prefix
+applies to clusters (e.g., `metadata.name: "edge-cluster"` becomes
+`dcm-edge-cluster` in kweb).
 
 Example request payload:
 
@@ -657,6 +723,65 @@ other DCM providers.
 | `DEBOUNCE_WINDOW` | No | `5s` | Minimum interval between status updates for the same resource |
 | `STATE_STORE_PATH` | No | `/data/state.db` | Path to the persistent bbolt state store |
 | `LOG_LEVEL` | No | `info` | Log verbosity (debug, info, warn, error) |
+| `SHUTDOWN_TIMEOUT` | No | `10s` | Maximum time to wait for graceful shutdown |
+| `READ_TIMEOUT` | No | `15s` | HTTP server read timeout |
+| `WRITE_TIMEOUT` | No | `60s` | HTTP server write timeout (must exceed longest kweb call) |
+| `IDLE_TIMEOUT` | No | `60s` | HTTP server idle connection timeout |
+| `REQUEST_TIMEOUT` | No | `45s` | Per-request context timeout (Chi middleware) |
+| `KWEB_TIMEOUT` | No | `120s` | Timeout for outbound HTTP calls to kweb |
+| `CLUSTER_CREATE_TIMEOUT` | No | `30m` | Max time a cluster can remain in CREATING before ERROR |
+
+### SP Lifecycle
+
+#### Startup Sequence
+
+1. Parse configuration from environment variables.
+2. Open the bbolt state store.
+3. Start the HTTP server (Chi router with OpenAPI validation middleware).
+4. Self-probe: poll `GET /health` on the local listener (1s HTTP client
+   timeout) until HTTP 200 is returned.
+5. On successful self-probe, launch background goroutines:
+   - Dual registration (VM + cluster) with exponential backoff.
+   - Status monitor (poller + debounce).
+6. Call `GET /vmprofiles` on kweb and log available VM profiles. Log a
+   warning if no profiles are configured.
+
+#### Graceful Shutdown
+
+On `SIGTERM` or `SIGINT`, the SP shuts down in the following order:
+
+1. **Stop accepting new requests.** Call `http.Server.Shutdown` with a
+   context derived from `SHUTDOWN_TIMEOUT`.
+2. **Stop the status monitor.** Cancel the polling goroutine's context and
+   wait for it to exit.
+3. **Close the NATS connection.** Flush pending messages and close.
+4. **Close the bbolt state store.** Ensure all pending writes are fsynced.
+
+The shutdown uses `signal.NotifyContext` for signal handling and a
+`sync.WaitGroup` to track goroutine completion. If the wait group does not
+complete within `SHUTDOWN_TIMEOUT`, the process logs a warning and exits.
+
+#### HTTP Server Timeouts
+
+The HTTP server is configured with timeouts to prevent resource exhaustion:
+
+- `READ_TIMEOUT` (default 15s): Maximum time to read the full request.
+- `WRITE_TIMEOUT` (default 60s): Maximum time to write the response. Set
+  higher than `KWEB_TIMEOUT` because the SP must forward kweb's response.
+- `IDLE_TIMEOUT` (default 60s): Maximum time a keep-alive connection can
+  remain idle.
+- `REQUEST_TIMEOUT` (default 45s): Per-request context deadline, enforced
+  via Chi middleware. Requests that exceed this deadline are cancelled and
+  return `504 Gateway Timeout`.
+
+#### kweb Client Timeout
+
+Every outbound HTTP call to kweb uses `context.WithTimeout` with the
+configured `KWEB_TIMEOUT` (default 120s). This is intentionally high
+because kweb VM creation is synchronous — the handler blocks until libvirt
+completes the operation, which can take over a minute for large images.
+Cluster creation returns immediately (async), so the timeout primarily
+guards against network partitions and hung kweb processes.
 
 ### Status Reporting to DCM
 
@@ -809,6 +934,7 @@ The canonical cluster lifecycle phases are: `CREATING`, `ACTIVE`,
 | CREATING | Recently created, no nodes ready | Cluster is being provisioned |
 | ACTIVE | Nodes and version present in status | Cluster is operational |
 | DEGRADED | Partial node readiness | Some nodes unhealthy |
+| ERROR | Still CREATING after `CLUSTER_CREATE_TIMEOUT` | Creation failed or timed out |
 | DELETED | Not found in kweb | Cluster has been deleted |
 
 Note: `UPDATING` is not supported in v1 because kweb does not expose cluster
@@ -816,6 +942,14 @@ update operations. The SP maps the canonical `FAILED` concept (creation
 errors) to `DEGRADED` when partial state exists, or publishes a `DELETED`
 event and removes the resource if creation fails completely before any nodes
 come up.
+
+**Cluster creation timeout:** kweb's `POST /kubes` spawns a background
+Python thread and returns immediately. If that thread crashes silently, the
+cluster never appears in `GET /kubes` and the SP would report `CREATING`
+indefinitely. To handle this, the SP tracks the creation timestamp in the
+state store. If a cluster remains in `CREATING` for longer than
+`CLUSTER_CREATE_TIMEOUT` (default 30 minutes), the SP transitions it to
+`ERROR` and publishes a status event.
 
 ### Risks and Mitigations
 
@@ -977,6 +1111,12 @@ On downgrade:
 - 2026-04-22: Scoped to development/testing/homelab use. Simplified
   security posture (trusted network assumed), removed multi-replica and
   scalability ceiling concerns, updated user stories and motivation.
+- 2026-04-22: Peer SP comparison findings: added SP lifecycle (graceful
+  shutdown, HTTP server timeouts, kweb client timeout), runtime OpenAPI
+  validation, core NATS publishing (not JetStream), RFC 7807 error
+  format, startup readiness self-probe, cluster creation timeout, profile
+  validation via GET /vmprofiles, dcm- name prefix for resources, and
+  cross-references to k8s-container-sp and status-report-implementation.
 
 ## Drawbacks
 
