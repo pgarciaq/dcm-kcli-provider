@@ -1,7 +1,7 @@
 .idea
 bin
 vendor
-dcm-kcli-provider
+/dcm-kcli-provider
 
 # Generated files - do not commit
 api/v1alpha1/openapi.yaml
