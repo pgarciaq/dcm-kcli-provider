@@ -4,6 +4,100 @@
 **Environment:** Apollo Hypervisor (`hpe-apollo-cn99xx-16.khw.eng.rdu2.dc.redhat.com`)
 **Architecture:** aarch64 (ARM64)
 
+## Prerequisites: What You Need Before the SP Does Anything Useful
+
+The kcli SP is just one piece of the DCM stack. By itself, it only exposes a
+REST API. For the **full DCM flow** (catalog UI → placement → policy → SP →
+backend), the following must be in place:
+
+### 1. Running DCM control plane
+
+All of these must be running (typically via `podman-compose`):
+
+| Component | Purpose |
+|-----------|---------|
+| API Gateway (Traefik) | Single ingress on `:9080`, routes to all managers |
+| Service Provider Manager | Provider registration, health checks, request routing |
+| Catalog Manager | Catalog items, catalog item instances, spec resolution |
+| Policy Manager | Rego policy evaluation for provider selection |
+| Placement Manager | Orchestrates catalog → policy → SPM delegation |
+| PostgreSQL | Persistence for catalog-manager and placement-manager |
+| NATS JetStream | CloudEvents transport for status updates |
+
+### 2. The kcli SP registered and healthy
+
+The SP must be running with:
+- `KWEB_URL` pointing at a running kweb instance
+- `SPM_URL` pointing at the SPM endpoint (via gateway or direct)
+- `LISTEN_ADDRESS` set to an IP reachable from the container network (e.g.,
+  `10.89.0.1:8085` for podman bridge gateway — **not** `localhost`)
+
+After startup, both providers (`kcli-vm`, `kcli-cluster`) must show
+`health_status: ready` in SPM.
+
+### 3. Catalog items
+
+Catalog items define what users can provision. Without them, there is nothing
+to create through the DCM UI or API.
+
+Example catalog items are provided in this repository:
+
+- [`docs/examples/catalog-item-vm.json`](examples/catalog-item-vm.json) —
+  Fedora VM with OS image, memory, and vCPU fields
+- [`docs/examples/catalog-item-cluster.json`](examples/catalog-item-cluster.json) —
+  K3s cluster with cluster type selector
+
+Create them via the API gateway:
+
+```bash
+curl -X POST http://localhost:9080/api/v1alpha1/catalog-items \
+  -H "Content-Type: application/json" \
+  -d @docs/examples/catalog-item-vm.json
+
+curl -X POST http://localhost:9080/api/v1alpha1/catalog-items \
+  -H "Content-Type: application/json" \
+  -d @docs/examples/catalog-item-cluster.json
+```
+
+### 4. Rego routing policy
+
+The policy manager must have a policy that routes requests to the kcli
+providers. Without a routing policy, the placement manager does not know which
+provider to delegate to and requests will fail.
+
+An example policy is provided:
+
+- [`docs/examples/policy-route-to-kcli.json`](examples/policy-route-to-kcli.json) —
+  unconditionally routes all VM requests to `kcli-vm`
+
+```bash
+curl -X POST http://localhost:9080/api/v1alpha1/policies \
+  -H "Content-Type: application/json" \
+  -d @docs/examples/policy-route-to-kcli.json
+```
+
+> **Note:** This example policy is a simple catch-all. In production, use Rego
+> logic that inspects `input.spec` fields (labels, regions, capacity) to select
+> the appropriate provider. You will also need a separate policy (or a combined
+> one) for routing cluster requests to `kcli-cluster`.
+
+### 5. kweb running with images available
+
+kweb must be running and have at least one VM image available (e.g., `fedora41`).
+Check available profiles with:
+
+```bash
+curl http://localhost:8000/vmprofiles
+```
+
+If the profiles list is empty, the SP will still work (kweb validates profiles
+on its side), but users will not see available options.
+
+See [`docs/examples/README.md`](examples/README.md) for the full setup
+walkthrough including customization options.
+
+---
+
 ## Stack Deployed
 
 | Component | Version | Port | Status |
@@ -131,3 +225,59 @@ kweb returned an empty profiles map (`{"profiles": {}}`). This means the profile
 7. **Collection-level endpoint registration** (`/vms`, `/clusters`) is critical for SPM to route creation requests correctly. The previous base-level registration (`/api/v1alpha1`) caused 404 errors.
 8. **Stable provider IDs** (`PROVIDER_ID_VM`, `PROVIDER_ID_CLUSTER`) prevent 409 conflicts on SP restart. Without them, each restart generates new UUIDs and conflicts with stale registrations.
 9. **Container-reachable LISTEN_ADDRESS** (e.g., `10.89.0.1:8085` for podman bridge gateway) is required when the SP runs on the host and SPM runs in a container. Using `:8085` alone causes SPM health checks to fail.
+
+See also: [`LESSONS_LEARNED.md`](LESSONS_LEARNED.md) for a broader guide on
+building DCM service providers.
+
+---
+
+## E2E Regression Test (Post-Lint-Fix)
+
+**Date:** 2026-04-22 (same day, after comprehensive linting cleanup)
+**Purpose:** Verify the kcli SP still works correctly after 186 lint fixes across
+15 files, including changes to production code (error handling, control flow
+refactoring, unused code removal).
+
+### Context
+
+A comprehensive `golangci-lint` cleanup was performed to bring the codebase into
+compliance with the DCM project's standard linter configuration (30+ linters).
+Changes included:
+
+- Rewriting `if-else` chains as `switch` statements (`gocritic`)
+- Removing an unused `healthResponse` method
+- Renaming unused parameters to `_` in production code (`revive`)
+- Adding `//nolint` directives for intentional error suppression patterns
+- Formatting changes from `gofumpt`
+
+These are not cosmetic-only changes — some touched control flow in handlers and
+the monitor. A full regression test was required.
+
+### Regression Test Results
+
+| Phase | Test | Result |
+|-------|------|--------|
+| **Build & Deploy** | Cross-compile arm64 binary, SCP to Apollo, start with same provider IDs | **PASS** — both providers registered and `ready` in SPM |
+| **Smoke: /health** | `GET /health` | **PASS** — `{"status":"pass"}` |
+| **Smoke: /vms/health** | `GET /vms/health` | **PASS** — `{"status":"pass"}` |
+| **Smoke: /clusters/health** | `GET /clusters/health` | **PASS** — `{"status":"pass"}` |
+| **Smoke: List VMs** | `GET /vms` | **PASS** — returns existing VMs |
+| **Smoke: List Clusters** | `GET /clusters` | **PASS** — returns empty list |
+| **VM Lifecycle: Create via catalog** | `POST /catalog-item-instances` with Fedora VM catalog item | **PASS** — 201, SPM delegated `POST /vms?id=<uuid>` to SP |
+| **VM Lifecycle: Verify in kweb** | `curl http://localhost:8000/vms` | **PASS** — `dcm-<uuid>` visible with status `up` |
+| **VM Lifecycle: Monitor detects RUNNING** | Wait for poll cycle | **PASS** — status transitions from PROVISIONING to RUNNING |
+| **VM Lifecycle: Delete** | `DELETE /vms/<id>` | **KNOWN ISSUE** — kweb DELETE returns 500 ([karmab/kcli#864](https://github.com/karmab/kcli/issues/864)); SP correctly propagates as RFC 7807 |
+| **VM Lifecycle: Cleanup via kcli CLI** | `kcli delete vm dcm-<uuid>` | **PASS** — VM deleted, monitor removes from store |
+| **Cluster Lifecycle: Create via SP** | `POST /clusters?id=test-regression-cluster` | **PASS** — 201, cluster created in kweb |
+| **Cluster Lifecycle: Delete** | `DELETE /clusters/test-regression-cluster` | **PASS** — 204 No Content, removed from SP and kweb |
+| **Idempotent Create** | POST same VM ID twice | **PASS** — second call returns 201 with existing resource |
+| **Conflict Handling** | Create VM that already exists in kweb | **PASS** — 409 with RFC 7807 problem detail |
+| **Health Degradation** | Stop kweb, check health endpoints | **PASS** — all return `{"status":"fail","message":"kweb is unreachable"}` |
+| **Health Recovery** | Restart kweb, check health endpoints | **PASS** — all return `{"status":"pass"}` |
+
+### Verdict
+
+**All tests pass.** The lint fixes did not introduce any regressions. The only
+failure is the pre-existing upstream kweb DELETE bug
+([karmab/kcli#864](https://github.com/karmab/kcli/issues/864)), which is not
+related to our code changes.
