@@ -110,8 +110,8 @@ type ClusterList struct {
 
 // ClusterSpec Provider-agnostic cluster specification aligned with the DCM catalog ClusterSpec
 type ClusterSpec struct {
-	Metadata ServiceMetadata `json:"metadata"`
-	Nodes    *Nodes          `json:"nodes,omitempty"`
+	Metadata *ServiceMetadata `json:"metadata,omitempty"`
+	Nodes    *Nodes           `json:"nodes,omitempty"`
 
 	// ProviderHints Provider-specific configuration (e.g. kcli profile overrides)
 	ProviderHints *ProviderHints         `json:"provider_hints,omitempty"`
@@ -212,10 +212,10 @@ type VMList struct {
 
 // VMSpec Provider-agnostic VM specification aligned with the DCM catalog VMSpec
 type VMSpec struct {
-	Access   *Access         `json:"access,omitempty"`
-	GuestOs  GuestOS         `json:"guest_os"`
-	Memory   *Memory         `json:"memory,omitempty"`
-	Metadata ServiceMetadata `json:"metadata"`
+	Access   *Access          `json:"access,omitempty"`
+	GuestOs  *GuestOS         `json:"guest_os,omitempty"`
+	Memory   *Memory          `json:"memory,omitempty"`
+	Metadata *ServiceMetadata `json:"metadata,omitempty"`
 
 	// ProviderHints Provider-specific configuration (e.g. kcli profile overrides)
 	ProviderHints        *ProviderHints         `json:"provider_hints,omitempty"`
@@ -352,9 +352,11 @@ func (a ClusterSpec) MarshalJSON() ([]byte, error) {
 	var err error
 	object := make(map[string]json.RawMessage)
 
-	object["metadata"], err = json.Marshal(a.Metadata)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+	if a.Metadata != nil {
+		object["metadata"], err = json.Marshal(a.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+		}
 	}
 
 	if a.Nodes != nil {
@@ -507,9 +509,11 @@ func (a VMSpec) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	object["guest_os"], err = json.Marshal(a.GuestOs)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'guest_os': %w", err)
+	if a.GuestOs != nil {
+		object["guest_os"], err = json.Marshal(a.GuestOs)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'guest_os': %w", err)
+		}
 	}
 
 	if a.Memory != nil {
@@ -519,9 +523,11 @@ func (a VMSpec) MarshalJSON() ([]byte, error) {
 		}
 	}
 
-	object["metadata"], err = json.Marshal(a.Metadata)
-	if err != nil {
-		return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+	if a.Metadata != nil {
+		object["metadata"], err = json.Marshal(a.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+		}
 	}
 
 	if a.ProviderHints != nil {

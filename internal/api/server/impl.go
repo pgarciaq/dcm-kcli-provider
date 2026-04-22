@@ -185,7 +185,7 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 		}
 	}
 
-	kcliName := dcmPrefix + spec.Metadata.Name
+	kcliName := dcmPrefix + resolveVMName(spec, req.Params.Id)
 	params := map[string]interface{}{}
 
 	if spec.Memory != nil {
@@ -206,7 +206,7 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 	if err := s.kweb.CreateVM(ctx, kcliName, profile, params); err != nil {
 		if errors.Is(err, kweb.ErrConflict) {
 			return CreateVM409ApplicationProblemPlusJSONResponse(
-				problemError(409, fmt.Sprintf("VM '%s' already exists", spec.Metadata.Name)),
+				problemError(409, fmt.Sprintf("VM '%s' already exists", strings.TrimPrefix(kcliName, dcmPrefix))),
 			), nil
 		}
 		if errors.Is(err, kweb.ErrKwebUnreachable) {
@@ -400,7 +400,7 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 		), nil
 	}
 
-	kcliName := dcmPrefix + spec.Metadata.Name
+	kcliName := dcmPrefix + resolveClusterName(spec, req.Params.Id)
 	params := map[string]interface{}{}
 	if spec.Nodes != nil {
 		if spec.Nodes.ControlPlane != nil && spec.Nodes.ControlPlane.Count != nil {
@@ -592,7 +592,42 @@ func resolveVMProfile(spec VMSpec) string {
 			}
 		}
 	}
-	return spec.GuestOs.Type
+	if spec.GuestOs != nil {
+		return spec.GuestOs.Type
+	}
+	return "fedora41"
+}
+
+// resolveVMName derives the kcli VM name from spec.metadata.name,
+// falling back to the SPM-provided instance ID (truncated to 63 chars).
+func resolveVMName(spec VMSpec, clientID *string) string {
+	if spec.Metadata != nil && spec.Metadata.Name != "" {
+		return spec.Metadata.Name
+	}
+	if clientID != nil && *clientID != "" {
+		name := *clientID
+		if len(name) > 63 {
+			name = name[:63]
+		}
+		return name
+	}
+	return uuid.New().String()[:8]
+}
+
+// resolveClusterName derives the kcli cluster name from spec.metadata.name,
+// falling back to the SPM-provided instance ID (truncated to 63 chars).
+func resolveClusterName(spec ClusterSpec, clientID *string) string {
+	if spec.Metadata != nil && spec.Metadata.Name != "" {
+		return spec.Metadata.Name
+	}
+	if clientID != nil && *clientID != "" {
+		name := *clientID
+		if len(name) > 63 {
+			name = name[:63]
+		}
+		return name
+	}
+	return uuid.New().String()[:8]
 }
 
 // resolveClusterType determines the kcli cluster type from the cluster spec.
@@ -649,8 +684,8 @@ func entryToVM(entry store.ResourceEntry) VM {
 		Path:   &path,
 		Spec: VMSpec{
 			ServiceType: st,
-			Metadata:    ServiceMetadata{Name: name},
-			GuestOs:     GuestOS{Type: ""},
+			Metadata:    &ServiceMetadata{Name: name},
+			GuestOs:     &GuestOS{Type: ""},
 		},
 	}
 }
@@ -667,7 +702,7 @@ func entryToCluster(entry store.ResourceEntry) Cluster {
 		Path:   &path,
 		Spec: ClusterSpec{
 			ServiceType: st,
-			Metadata:    ServiceMetadata{Name: name},
+			Metadata:    &ServiceMetadata{Name: name},
 		},
 	}
 }

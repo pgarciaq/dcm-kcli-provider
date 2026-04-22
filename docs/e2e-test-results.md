@@ -29,6 +29,8 @@
 | Cluster provider registers with SPM | 201 Created | 201, provider visible via gateway | PASS |
 | Dual registration (VM + cluster) | Two distinct providers in SPM | Both appear with correct service_type | PASS |
 | Providers visible via API gateway | GET /api/v1alpha1/providers | Both providers listed | PASS |
+| Collection-level endpoints registered | `/vms` for VM, `/clusters` for cluster | Confirmed via GET /providers | PASS |
+| SPM health checks use /vms/health and /clusters/health | health_status: ready | Both show ready | PASS |
 
 ### VM Lifecycle
 
@@ -53,6 +55,17 @@
 | Get cluster (live kweb data) | Returns cluster with version | 200, version="N/A" (kweb returns N/A for new clusters) | PASS |
 | Create cluster with invalid type "kind" | 400 Bad Request | `400` with OpenAPI enum validation | PASS |
 | Get non-existent cluster | 404 Not Found | `404` with RFC 7807 body | PASS |
+
+### SPM Generic Resource Protocol (Full DCM Flow)
+
+| Test | Expected | Actual | Status |
+|---|---|---|---|
+| Create VM via catalog-item-instances | 201, VM provisioned via kcli SP | `201` catalog instance created, SP received `POST /vms?id=<uuid>`, VM created in kweb | **PASS** |
+| SPM forwards spec to SP | `POST {endpoint}?id=<uuid>` with `{"spec": ...}` | SP log: `POST /vms?id=694347de-... - 201 248B` | **PASS** |
+| VM visible in service-type-instances | Instance with status RUNNING | `{"id":"694347de-...","status":"RUNNING","provider_name":"kcli-vm"}` | **PASS** |
+| VM visible via kcli | VM running in libvirt | `dcm-694347de-...` status=up, profile=fedora41 | **PASS** |
+| Catalog spec resolution | user_values merged into spec | Spec contains `guest_os.type`, `memory.size`, `vcpu.count` | **PASS** |
+| SP handles missing metadata.name | Derive name from SPM instance ID | kcli name = `dcm-694347de-0bc4-438b-834d-91402d46c98f` | **PASS** |
 
 ### NATS CloudEvents
 
@@ -82,6 +95,17 @@
 - `internal/kweb/client.go` - Added conflict detection in `parseResponse` for 200-range responses
 - `internal/kweb/client_unit_test.go` - Updated test and added coverage for non-conflict failures
 
+### BUG-002: SPM catalog flow returned 400 due to required metadata field
+
+**Root cause:** The VMSpec and ClusterSpec schemas in `openapi.yaml` required `metadata` (with `name`) and `guest_os`, but the catalog-manager's resolved spec does not include a `metadata` object. When SPM forwarded the resolved spec to the SP, the OpenAPI request validator middleware rejected the request with `property "metadata" is missing`.
+
+**Fix:** Made `metadata` and `guest_os` optional in VMSpec and ClusterSpec. Added `resolveVMName()` and `resolveClusterName()` helpers that fall back to the SPM-provided instance ID when `metadata.name` is absent. Updated `resolveVMProfile()` to handle nil `GuestOs` with a sensible default.
+
+**Files changed:**
+- `api/v1alpha1/openapi.yaml` - Removed `metadata` and `guest_os` from required fields
+- `internal/api/server/impl.go` - Added name resolution helpers, nil-safe field access
+- Regenerated: `api/v1alpha1/types.gen.go`, `api/v1alpha1/spec.gen.go`, `internal/api/server/server.gen.go`, `pkg/client/client.gen.go`
+
 ## Known Issues (Not Bugs in Our Code)
 
 ### kweb DELETE returns HTML 500
@@ -91,10 +115,6 @@ kweb's `DELETE /vms/{name}` endpoint returns an HTML error page instead of JSON.
 ### kweb default port changed in kcli v99.0
 
 kweb now defaults to port **8000** (was 18000 in earlier versions). The `kcli web` subcommand was renamed to a standalone `kweb` binary.
-
-### SPM health_status shows "not_ready"
-
-The endpoint registered with SPM is `http://:8085/api/v1alpha1` (missing hostname) because the SP derives it from `LISTEN_ADDRESS=:8085`. SPM cannot resolve this to perform health checks. In production, either set `LISTEN_ADDRESS=<hostname>:8085` or add a separate `PROVIDER_ENDPOINT` environment variable.
 
 ### No VM profiles configured
 
@@ -107,3 +127,7 @@ kweb returned an empty profiles map (`{"profiles": {}}`). This means the profile
 3. **NATS CloudEvents flow end-to-end**, from the monitor detecting status changes to publishing on the `dcm.vm` subject.
 4. **OpenAPI validation middleware works** in production, catching malformed requests before they reach handlers.
 5. **Cross-compilation** (amd64 → arm64) with static linking produced a working binary with zero runtime dependencies.
+6. **Catalog-manager spec resolution** does not include `metadata` or other fields not defined in the catalog item's `fields` array. Service providers must handle optional metadata gracefully by deriving names from the SPM instance ID.
+7. **Collection-level endpoint registration** (`/vms`, `/clusters`) is critical for SPM to route creation requests correctly. The previous base-level registration (`/api/v1alpha1`) caused 404 errors.
+8. **Stable provider IDs** (`PROVIDER_ID_VM`, `PROVIDER_ID_CLUSTER`) prevent 409 conflicts on SP restart. Without them, each restart generates new UUIDs and conflicts with stale registrations.
+9. **Container-reachable LISTEN_ADDRESS** (e.g., `10.89.0.1:8085` for podman bridge gateway) is required when the SP runs on the host and SPM runs in a container. Using `:8085` alone causes SPM health checks to fail.
