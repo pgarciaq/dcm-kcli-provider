@@ -20,7 +20,12 @@ fmt:
 vet:
 	go vet ./...
 
+generate-api:
+	go generate ./api/v1alpha1/...
+	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen --config=internal/api/server/server.gen.cfg -o internal/api/server/server.gen.go api/v1alpha1/openapi.yaml
+	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen --config=pkg/client/client.gen.cfg -o pkg/client/client.gen.go api/v1alpha1/openapi.yaml
+
 clean:
 	rm -rf bin/
 
-.PHONY: build test test-cover lint check fmt vet clean
+.PHONY: build test test-cover lint check fmt vet generate-api clean

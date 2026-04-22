@@ -13,6 +13,7 @@ import (
 
 var ErrKwebUnreachable = errors.New("kweb is unreachable")
 var ErrConflict = errors.New("resource already exists")
+var ErrNotFound = errors.New("resource not found in kweb")
 
 type KwebError struct {
 	StatusCode int
@@ -27,16 +28,28 @@ func (e *KwebError) Error() string {
 }
 
 type VMInfo struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	IP     string `json:"ip,omitempty"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	IP           string `json:"ip,omitempty"`
+	ID           string `json:"id,omitempty"`
+	NumCPUs      int    `json:"numcpus,omitempty"`
+	Memory       int    `json:"memory,omitempty"`
+	Profile      string `json:"profile,omitempty"`
+	Plan         string `json:"plan,omitempty"`
+	Kube         string `json:"kube,omitempty"`
+	KubeType     string `json:"kubetype,omitempty"`
+	CreationDate string `json:"creationdate,omitempty"`
+	User         string `json:"user,omitempty"`
 }
 
 type ClusterInfo struct {
-	Name    string `json:"name"`
-	Status  string `json:"status,omitempty"`
-	Version string `json:"version,omitempty"`
-	Nodes   string `json:"nodes,omitempty"`
+	Name        string `json:"name"`
+	Status      string `json:"status,omitempty"`
+	Version     string `json:"version,omitempty"`
+	ClusterType string `json:"type,omitempty"`
+	Plan        string `json:"plan,omitempty"`
+	VMs         string `json:"vms,omitempty"`
+	Nodes       [][]string `json:"nodes,omitempty"`
 }
 
 type Client struct {
@@ -72,29 +85,13 @@ func (c *Client) ListVMs(ctx context.Context) ([]VMInfo, error) {
 		return nil, err
 	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		var list []VMInfo
-		if err2 := json.Unmarshal(data, &list); err2 != nil {
-			return nil, fmt.Errorf("parsing vm list: %w", err)
-		}
-		return list, nil
+	var wrapper struct {
+		VMs []VMInfo `json:"vms"`
 	}
-
-	var vms []VMInfo
-	for name, val := range result {
-		vm := VMInfo{Name: name}
-		if info, ok := val.(map[string]interface{}); ok {
-			if s, ok := info["status"].(string); ok {
-				vm.Status = s
-			}
-			if ip, ok := info["ip"].(string); ok {
-				vm.IP = ip
-			}
-		}
-		vms = append(vms, vm)
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, fmt.Errorf("parsing vm list: %w", err)
 	}
-	return vms, nil
+	return wrapper.VMs, nil
 }
 
 func (c *Client) GetVM(ctx context.Context, name string) (*VMInfo, error) {
@@ -103,19 +100,14 @@ func (c *Client) GetVM(ctx context.Context, name string) (*VMInfo, error) {
 		return nil, err
 	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
+	var vm VMInfo
+	if err := json.Unmarshal(data, &vm); err != nil {
 		return nil, fmt.Errorf("parsing vm info: %w", err)
 	}
-
-	vm := &VMInfo{Name: name}
-	if s, ok := result["status"].(string); ok {
-		vm.Status = s
+	if vm.Name == "" {
+		return nil, ErrNotFound
 	}
-	if ip, ok := result["ip"].(string); ok {
-		vm.IP = ip
-	}
-	return vm, nil
+	return &vm, nil
 }
 
 func (c *Client) DeleteVM(ctx context.Context, name string) error {
@@ -128,15 +120,15 @@ func (c *Client) ListProfiles(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 
-	var profiles []string
-	if err := json.Unmarshal(data, &profiles); err != nil {
-		var profileMap map[string]interface{}
-		if err2 := json.Unmarshal(data, &profileMap); err2 != nil {
-			return nil, fmt.Errorf("parsing profiles: %w", err)
-		}
-		for name := range profileMap {
-			profiles = append(profiles, name)
-		}
+	var wrapper struct {
+		Profiles map[string]interface{} `json:"profiles"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, fmt.Errorf("parsing profiles: %w", err)
+	}
+	profiles := make([]string, 0, len(wrapper.Profiles))
+	for name := range wrapper.Profiles {
+		profiles = append(profiles, name)
 	}
 	return profiles, nil
 }
@@ -158,22 +150,25 @@ func (c *Client) ListClusters(ctx context.Context) ([]ClusterInfo, error) {
 		return nil, err
 	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
-		var list []ClusterInfo
-		if err2 := json.Unmarshal(data, &list); err2 != nil {
-			return nil, fmt.Errorf("parsing cluster list: %w", err)
-		}
-		return list, nil
+	var wrapper struct {
+		Kubes map[string]json.RawMessage `json:"kubes"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, fmt.Errorf("parsing cluster list: %w", err)
 	}
 
-	var clusters []ClusterInfo
-	for name, val := range result {
+	clusters := make([]ClusterInfo, 0, len(wrapper.Kubes))
+	for name, raw := range wrapper.Kubes {
 		cl := ClusterInfo{Name: name}
-		if info, ok := val.(map[string]interface{}); ok {
-			if s, ok := info["status"].(string); ok {
-				cl.Status = s
-			}
+		var info struct {
+			Type string `json:"type"`
+			Plan string `json:"plan"`
+			VMs  string `json:"vms"`
+		}
+		if err := json.Unmarshal(raw, &info); err == nil {
+			cl.ClusterType = info.Type
+			cl.Plan = info.Plan
+			cl.VMs = info.VMs
 		}
 		clusters = append(clusters, cl)
 	}
@@ -186,17 +181,29 @@ func (c *Client) GetCluster(ctx context.Context, name string) (*ClusterInfo, err
 		return nil, err
 	}
 
-	var result map[string]interface{}
-	if err := json.Unmarshal(data, &result); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parsing cluster info: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, ErrNotFound
 	}
 
 	cl := &ClusterInfo{Name: name}
-	if s, ok := result["status"].(string); ok {
-		cl.Status = s
+	if v, ok := raw["version"]; ok {
+		var version string
+		if err := json.Unmarshal(v, &version); err == nil {
+			cl.Version = version
+		}
 	}
-	if v, ok := result["version"].(string); ok {
-		cl.Version = v
+	if n, ok := raw["nodes"]; ok {
+		var nodes [][]string
+		if err := json.Unmarshal(n, &nodes); err == nil {
+			cl.Nodes = nodes
+		}
+	}
+	if len(cl.Nodes) > 0 {
+		cl.Status = "active"
 	}
 	return cl, nil
 }
@@ -302,6 +309,16 @@ func (c *Client) parseResponse(resp *http.Response) error {
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		var structured map[string]interface{}
+		if err := json.Unmarshal(data, &structured); err == nil {
+			if result, ok := structured["result"].(string); ok && result == "failure" {
+				kErr := &KwebError{StatusCode: resp.StatusCode}
+				if reason, ok := structured["reason"].(string); ok {
+					kErr.Reason = reason
+				}
+				return kErr
+			}
+		}
 		return nil
 	}
 
@@ -330,9 +347,15 @@ func parseErrorBody(statusCode int, data []byte) error {
 	}
 
 	raw := strings.TrimSpace(string(data))
-	if raw != "" && raw != "{}" {
-		kErr.Reason = raw
+	if raw == "" || raw == "{}" {
+		return kErr
 	}
 
+	if strings.Contains(raw, "<html") || strings.Contains(raw, "<!DOCTYPE") {
+		kErr.Reason = fmt.Sprintf("kweb returned HTML error (HTTP %d)", statusCode)
+		return kErr
+	}
+
+	kErr.Reason = raw
 	return kErr
 }

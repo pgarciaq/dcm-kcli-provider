@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -32,6 +33,7 @@ type ClusterHandler struct {
 	kweb      KwebClient
 	store     StateStore
 	publisher events.Publisher
+	createMu  sync.Mutex
 }
 
 func NewClusterHandler(k KwebClient, s StateStore, pub events.Publisher) *ClusterHandler {
@@ -92,7 +94,10 @@ func (h *ClusterHandler) Create(w http.ResponseWriter, r *http.Request) {
 		params["workers"] = req.Workers.Count
 	}
 
-	if err := h.kweb.CreateCluster(r.Context(), kcliName, kwebType, params); err != nil {
+	h.createMu.Lock()
+	createErr := h.kweb.CreateCluster(r.Context(), kcliName, kwebType, params)
+	h.createMu.Unlock()
+	if err := createErr; err != nil {
 		if errors.Is(err, kweb.ErrKwebUnreachable) {
 			handlers.WriteProblem(w, r, http.StatusBadGateway, "kweb is unreachable")
 			return

@@ -7,24 +7,27 @@ import (
 )
 
 type Config struct {
-	ListenAddress       string
-	KwebURL             string
-	SPMURL              string
-	NATSURL             string
-	ProviderNameVM      string
-	ProviderNameCluster string
-	Region              string
-	Zone                string
-	PollInterval        time.Duration
-	DebounceWindow      time.Duration
-	StateStorePath      string
-	LogLevel            string
-	ShutdownTimeout     time.Duration
-	ReadTimeout         time.Duration
-	WriteTimeout        time.Duration
-	IdleTimeout         time.Duration
-	RequestTimeout      time.Duration
-	KwebTimeout         time.Duration
+	ListenAddress        string
+	KwebURL              string
+	SPMURL               string
+	NATSURL              string
+	ProviderIDVM         string
+	ProviderIDCluster    string
+	ProviderNameVM       string
+	ProviderNameCluster  string
+	SchemaVersion        string
+	Region               string
+	Zone                 string
+	PollInterval         time.Duration
+	DebounceWindow       time.Duration
+	StateStorePath       string
+	LogLevel             string
+	ShutdownTimeout      time.Duration
+	ReadTimeout          time.Duration
+	WriteTimeout         time.Duration
+	IdleTimeout          time.Duration
+	RequestTimeout       time.Duration
+	KwebTimeout          time.Duration
 	ClusterCreateTimeout time.Duration
 }
 
@@ -44,8 +47,11 @@ func Load() (*Config, error) {
 		KwebURL:             kwebURL,
 		SPMURL:              spmURL,
 		NATSURL:             os.Getenv("NATS_URL"),
+		ProviderIDVM:        envOrDefault("PROVIDER_ID_VM", ""),
+		ProviderIDCluster:   envOrDefault("PROVIDER_ID_CLUSTER", ""),
 		ProviderNameVM:      envOrDefault("PROVIDER_NAME_VM", "kcli-vm"),
 		ProviderNameCluster: envOrDefault("PROVIDER_NAME_CLUSTER", "kcli-cluster"),
+		SchemaVersion:       envOrDefault("SCHEMA_VERSION", "v1alpha1"),
 		Region:              os.Getenv("REGION"),
 		Zone:                os.Getenv("ZONE"),
 		StateStorePath:      envOrDefault("STATE_STORE_PATH", "/data/state.db"),

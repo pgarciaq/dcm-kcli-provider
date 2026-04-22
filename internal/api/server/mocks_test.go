@@ -1,8 +1,7 @@
-package v1alpha1_test
+package server_test
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +24,7 @@ type mockKweb struct {
 	deleteClusterErr    error
 	deleteClusterCalled bool
 	lastCreateVMName    string
+	healthResult        bool
 }
 
 func (m *mockKweb) CreateVM(_ context.Context, name, profile string, params map[string]interface{}) error {
@@ -82,6 +82,15 @@ func (m *mockKweb) DeleteCluster(_ context.Context, name string) error {
 	defer m.mu.Unlock()
 	m.deleteClusterCalled = true
 	return m.deleteClusterErr
+}
+
+func (m *mockKweb) CheckHealth(_ context.Context) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.healthResult {
+		return false, kweb.ErrKwebUnreachable
+	}
+	return true, nil
 }
 
 type mockStore struct {
@@ -194,11 +203,6 @@ type mockProfileCache struct {
 func (m *mockProfileCache) Profiles() []string {
 	return m.profiles
 }
-
-var errUnreachable = kweb.ErrKwebUnreachable
-var errConflict = kweb.ErrConflict
-
-func makeKwebUnreachable() error { return errors.New("kweb unreachable: " + errUnreachable.Error()) }
 
 type slowCreateKweb struct {
 	mockKweb

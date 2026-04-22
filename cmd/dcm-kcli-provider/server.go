@@ -14,10 +14,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
+	apiserver "github.com/pgarciaq/dcm-kcli-provider/internal/api/server"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/config"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/handlers"
-	"github.com/pgarciaq/dcm-kcli-provider/internal/handlers/v1alpha1"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/kweb"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/monitor"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/registration"
@@ -68,29 +69,31 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		ClusterCreateTimeout: cfg.ClusterCreateTimeout,
 	}
 	s.monitor = monitor.New(s.kwebClient, s.store, s.publisher, monCfg, logger)
-	s.registrar = registration.NewRegistrar(cfg.SPMURL, logger)
+	vmProviderCfg := registration.ProviderConfig{
+		ID:            cfg.ProviderIDVM,
+		Name:          cfg.ProviderNameVM,
+		Endpoint:      fmt.Sprintf("http://%s/api/v1alpha1", cfg.ListenAddress),
+		ServiceType:   "vm",
+		SchemaVersion: cfg.SchemaVersion,
+	}
+	if vmProviderCfg.ID == "" {
+		vmProviderCfg.ID = uuid.New().String()
+	}
+	s.registrar, err = registration.NewRegistrar(cfg.SPMURL, vmProviderCfg, logger)
+	if err != nil {
+		s.store.Close()
+		return nil, fmt.Errorf("creating registrar: %w", err)
+	}
 
-	healthH := handlers.NewHealthHandler(s.kwebClient, version)
-	vmH := v1alpha1.NewVMHandler(s.kwebClient, s.store, s.publisher, s.monitor)
-	clH := v1alpha1.NewClusterHandler(s.kwebClient, s.store, s.publisher)
+	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version)
+	strictHandler := apiserver.NewStrictHandler(impl, nil)
 
 	r := chi.NewRouter()
-	// PanicRecovery returns RFC 7807 (application/problem+json) instead of Chi's default plain-text recoverer.
 	r.Use(handlers.PanicRecovery(logger))
-	// Request lifecycle (method, path, status, duration) is logged by Chi's middleware.Logger.
 	r.Use(middleware.Logger)
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
-	r.Get("/health", healthH.ServeHTTP)
-	r.Route("/api/v1alpha1", func(r chi.Router) {
-		r.Post("/vms", vmH.Create)
-		r.Get("/vms", vmH.List)
-		r.Get("/vms/{vmId}", vmH.Get)
-		r.Delete("/vms/{vmId}", vmH.Delete)
-		r.Post("/clusters", clH.Create)
-		r.Get("/clusters", clH.List)
-		r.Get("/clusters/{clusterId}", clH.Get)
-		r.Delete("/clusters/{clusterId}", clH.Delete)
-	})
+
+	apiserver.HandlerFromMuxWithBaseURL(strictHandler, r, "/api/v1alpha1")
 
 	s.httpServer = &http.Server{
 		Handler:      r,
@@ -135,28 +138,18 @@ func (s *Server) Start(ctx context.Context) error {
 		s.monitor.Run(monCtx)
 	}()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		s.registerVM(ctx)
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		s.registerCluster(ctx)
-	}()
+	s.registrar.StartBackground(ctx)
 
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	<-sigCtx.Done()
 	s.logger.Info("shutdown signal received")
 
-	s.Shutdown(monCancel, &wg)
+	s.shutdown(monCancel, &wg)
 	return nil
 }
 
-func (s *Server) Shutdown(monCancel context.CancelFunc, wg *sync.WaitGroup) {
+func (s *Server) shutdown(monCancel context.CancelFunc, wg *sync.WaitGroup) {
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), s.cfg.ShutdownTimeout)
 	defer shutCancel()
 
@@ -167,7 +160,9 @@ func (s *Server) Shutdown(monCancel context.CancelFunc, wg *sync.WaitGroup) {
 	monCancel()
 
 	s.publisher.Close()
-	s.store.Close()
+	if err := s.store.Close(); err != nil {
+		s.logger.Warn("store close error", "error", err)
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -190,7 +185,7 @@ func (s *Server) selfProbe(ctx context.Context) bool {
 		if ctx.Err() != nil {
 			return false
 		}
-		resp, err := client.Get(fmt.Sprintf("http://%s/health", addr))
+		resp, err := client.Get(fmt.Sprintf("http://%s/api/v1alpha1/health", addr))
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -200,40 +195,6 @@ func (s *Server) selfProbe(ctx context.Context) bool {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return false
-}
-
-func (s *Server) registerVM(ctx context.Context) {
-	req := registration.RegistrationRequest{
-		Name:        s.cfg.ProviderNameVM,
-		ServiceType: "vm",
-		DisplayName: "kcli VM Service Provider",
-		Endpoint:    fmt.Sprintf("http://%s/api/v1alpha1/vms", s.cfg.ListenAddress),
-		Metadata: registration.Metadata{
-			Region: s.cfg.Region,
-			Zone:   s.cfg.Zone,
-		},
-		Operations: []string{"CREATE", "READ", "DELETE"},
-	}
-	if err := s.registrar.Register(ctx, req); err != nil {
-		s.logger.Warn("VM registration failed", "error", err)
-	}
-}
-
-func (s *Server) registerCluster(ctx context.Context) {
-	req := registration.RegistrationRequest{
-		Name:        s.cfg.ProviderNameCluster,
-		ServiceType: "cluster",
-		DisplayName: "kcli Cluster Service Provider",
-		Endpoint:    fmt.Sprintf("http://%s/api/v1alpha1/clusters", s.cfg.ListenAddress),
-		Metadata: registration.Metadata{
-			Region: s.cfg.Region,
-			Zone:   s.cfg.Zone,
-		},
-		Operations: []string{"CREATE", "READ", "DELETE"},
-	}
-	if err := s.registrar.Register(ctx, req); err != nil {
-		s.logger.Warn("cluster registration failed", "error", err)
-	}
 }
 
 func (s *Server) Addr() string {

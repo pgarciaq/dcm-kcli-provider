@@ -168,7 +168,8 @@ func (m *Monitor) pollClusters(ctx context.Context) {
 			continue
 		}
 
-		hasNodes := kwebCl.Status == "active" || kwebCl.Version != ""
+		// Cluster is considered active if it appears in the kweb list (it exists)
+		hasNodes := kwebCl.ClusterType != "" || kwebCl.VMs != ""
 		newStatus := MapClusterStatus(hasNodes, entry.CreatedAt, m.config.ClusterCreateTimeout)
 		if newStatus != entry.Status {
 			m.publishWithDebounce(ctx, entry.ID, "cluster", newStatus, fmt.Sprintf("Cluster %s status: %s", entry.KcliName, newStatus))

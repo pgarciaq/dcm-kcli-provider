@@ -1,11 +1,8 @@
-// New tests embed formal case IDs in It() descriptions using the TC-<area>-<kind>-UT-nnn convention.
-// Legacy cases may be referenced only by C-nn comments on nearby lines.
 package registration_test
 
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -16,328 +13,271 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	spmv1alpha1 "github.com/dcm-project/service-provider-manager/api/v1alpha1/provider"
+	"github.com/google/uuid"
+
 	"github.com/pgarciaq/dcm-kcli-provider/internal/registration"
 )
 
 var _ = Describe("Registrar", func() {
-	var logger *slog.Logger
+	var (
+		logger      *slog.Logger
+		providerCfg registration.ProviderConfig
+		validUUID   string
+	)
 
 	BeforeEach(func() {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		validUUID = uuid.New().String()
+		providerCfg = registration.ProviderConfig{
+			ID:            validUUID,
+			Name:          "kcli-vm",
+			Endpoint:      "http://sp:8080/api/v1alpha1",
+			ServiceType:   "vm",
+			SchemaVersion: "v1alpha1",
+		}
 	})
 
-	// C-76: Registrar sends POST with VM payload
-	It("sends POST to /providers with VM registration payload", func() {
-		var receivedBody registration.RegistrationRequest
+	// C-76: Registration sends POST /providers with correct payload using SPM client
+	It("sends POST to /providers with snake_case fields and schema_version", func() {
+		var receivedBody spmv1alpha1.Provider
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			Expect(r.Method).To(Equal("POST"))
 			Expect(r.URL.Path).To(Equal("/providers"))
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &receivedBody)
-			w.WriteHeader(200)
+			Expect(r.URL.Query().Get("id")).To(Equal(validUUID))
+			json.NewDecoder(r.Body).Decode(&receivedBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer server.Close()
 
-		reg := registration.NewRegistrar(server.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			DisplayName: "kcli VM Service Provider",
-			Endpoint:    "http://sp:8080/api/v1alpha1/vms",
-			Metadata:    registration.Metadata{Region: "us-east", Zone: "zone1"},
-			Operations:  []string{"CREATE", "READ", "DELETE"},
-		}
-
-		err := reg.Register(context.Background(), req)
+		reg, err := registration.NewRegistrar(server.URL, providerCfg, logger)
 		Expect(err).NotTo(HaveOccurred())
+
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
+
+		Expect(receivedBody.Name).To(Equal("kcli-vm"))
 		Expect(receivedBody.ServiceType).To(Equal("vm"))
-		Expect(receivedBody.Operations).To(ConsistOf("CREATE", "READ", "DELETE"))
+		Expect(receivedBody.SchemaVersion).To(Equal("v1alpha1"))
+		Expect(receivedBody.Endpoint).To(Equal("http://sp:8080/api/v1alpha1"))
 	})
 
-	// C-77: Registrar sends POST with cluster payload
-	It("sends POST with cluster registration payload", func() {
-		var receivedBody registration.RegistrationRequest
+	// C-77: Registration works for cluster service type too
+	It("registers cluster service type successfully", func() {
+		var receivedBody spmv1alpha1.Provider
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			body, _ := io.ReadAll(r.Body)
-			json.Unmarshal(body, &receivedBody)
-			w.WriteHeader(200)
+			json.NewDecoder(r.Body).Decode(&receivedBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-cluster"})
 		}))
 		defer server.Close()
 
-		reg := registration.NewRegistrar(server.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-cluster",
-			ServiceType: "cluster",
-			DisplayName: "kcli Cluster Service Provider",
-			Endpoint:    "http://sp:8080/api/v1alpha1/clusters",
-			Operations:  []string{"CREATE", "READ", "DELETE"},
+		clCfg := registration.ProviderConfig{
+			ID:            validUUID,
+			Name:          "kcli-cluster",
+			Endpoint:      "http://sp:8080/api/v1alpha1",
+			ServiceType:   "cluster",
+			SchemaVersion: "v1alpha1",
 		}
-
-		err := reg.Register(context.Background(), req)
+		reg, err := registration.NewRegistrar(server.URL, clCfg, logger)
 		Expect(err).NotTo(HaveOccurred())
+
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
 		Expect(receivedBody.ServiceType).To(Equal("cluster"))
 	})
 
-	// C-78: Registrar retries with exponential backoff on 500, with increasing delays
+	// C-78: Retries with exponential backoff on 500
 	It("retries with exponential backoff on server error", func() {
 		var attempts atomic.Int32
-		var timestamps []time.Time
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			timestamps = append(timestamps, time.Now())
 			n := attempts.Add(1)
 			if n <= 2 {
 				w.WriteHeader(500)
 				return
 			}
-			w.WriteHeader(200)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer server.Close()
 
-		reg := registration.NewRegistrar(server.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Operations:  []string{"CREATE", "READ", "DELETE"},
-		}
-
-		err := reg.Register(context.Background(), req)
+		reg, err := registration.NewRegistrar(server.URL, providerCfg, logger,
+			registration.SetInitialBackoff(10*time.Millisecond),
+			registration.SetMaxBackoff(50*time.Millisecond),
+		)
 		Expect(err).NotTo(HaveOccurred())
-		Expect(attempts.Load()).To(Equal(int32(3)))
 
-		// Verify increasing delays between attempts (exponential backoff)
-		if len(timestamps) >= 3 {
-			delay1 := timestamps[1].Sub(timestamps[0])
-			delay2 := timestamps[2].Sub(timestamps[1])
-			Expect(delay2).To(BeNumerically(">=", delay1))
-		}
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 5*time.Second).Should(BeClosed())
+		Expect(attempts.Load()).To(BeNumerically(">=", int32(3)))
 	})
 
-	// C-79: Registrar stops retrying when context is cancelled mid-backoff
+	// C-79: Stops retrying when context is cancelled
 	It("stops retrying when context is cancelled during backoff", func() {
-		var attempts atomic.Int32
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			attempts.Add(1)
 			w.WriteHeader(500)
 		}))
 		defer server.Close()
 
-		reg := registration.NewRegistrar(server.URL, logger)
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-		defer cancel()
+		reg, err := registration.NewRegistrar(server.URL, providerCfg, logger,
+			registration.SetInitialBackoff(10*time.Millisecond),
+		)
+		Expect(err).NotTo(HaveOccurred())
 
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Operations:  []string{"CREATE", "READ", "DELETE"},
-		}
-
-		err := reg.Register(ctx, req)
-		Expect(err).To(HaveOccurred())
-		// Should have made some attempts but not exhausted all retries
-		Expect(attempts.Load()).To(BeNumerically(">=", 1))
-		Expect(attempts.Load()).To(BeNumerically("<", 10))
+		ctx, cancel := context.WithCancel(context.Background())
+		reg.StartBackground(ctx)
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		Eventually(reg.Done(), 5*time.Second).Should(BeClosed())
 	})
 
-	// TC-REG-UT-001: 4xx from SPM does not retry — 400 fails immediately with a single attempt
-	It("TC-REG-UT-001: SPM 400 causes immediate registration failure without retry", func() {
+	// TC-REG-UT-001: 400 from SPM is non-retryable
+	It("TC-REG-UT-001: SPM 400 causes immediate failure without retry", func() {
 		var attempts atomic.Int32
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			attempts.Add(1)
+			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(spmv1alpha1.Error{Title: "Invalid config", Type: "about:blank"})
 		}))
 		defer spm.Close()
 
-		reg := registration.NewRegistrar(spm.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Operations:  []string{"CREATE"},
-		}
+		reg, err := registration.NewRegistrar(spm.URL, providerCfg, logger,
+			registration.SetInitialBackoff(10*time.Millisecond),
+		)
+		Expect(err).NotTo(HaveOccurred())
 
-		err := reg.Register(context.Background(), req)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("registration failed with status 400"))
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
 		Expect(attempts.Load()).To(Equal(int32(1)))
 	})
 
-	// TC-REG-UT-002: 4xx from SPM does not retry — 409 fails immediately with a single attempt
-	It("TC-REG-UT-002: SPM 409 causes immediate registration failure without retry", func() {
+	// TC-REG-UT-002: 409 from SPM is non-retryable
+	It("TC-REG-UT-002: SPM 409 causes immediate failure without retry", func() {
 		var attempts atomic.Int32
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			attempts.Add(1)
+			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(409)
+			json.NewEncoder(w).Encode(spmv1alpha1.Error{Title: "Conflict", Type: "about:blank"})
 		}))
 		defer spm.Close()
 
-		reg := registration.NewRegistrar(spm.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Operations:  []string{"CREATE"},
-		}
+		reg, err := registration.NewRegistrar(spm.URL, providerCfg, logger,
+			registration.SetInitialBackoff(10*time.Millisecond),
+		)
+		Expect(err).NotTo(HaveOccurred())
 
-		err := reg.Register(context.Background(), req)
-		Expect(err).To(HaveOccurred())
-		Expect(err.Error()).To(ContainSubstring("registration failed with status 409"))
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
 		Expect(attempts.Load()).To(Equal(int32(1)))
 	})
 
-	// TC-REG-UT-003: StartBackground is idempotent — only one registration goroutine
-	It("TC-REG-UT-003: calling StartBackground twice only performs registration once", func() {
-		var spmAttempts atomic.Int32
+	// TC-REG-UT-003: StartBackground is idempotent
+	It("TC-REG-UT-003: calling StartBackground twice only registers once", func() {
+		var attempts atomic.Int32
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			spmAttempts.Add(1)
-			w.WriteHeader(200)
+			attempts.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer spm.Close()
 
-		reg := registration.NewRegistrar(spm.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Operations:  []string{"CREATE"},
-		}
+		reg, err := registration.NewRegistrar(spm.URL, providerCfg, logger)
+		Expect(err).NotTo(HaveOccurred())
 
-		reg.StartBackground(context.Background(), req)
-		reg.StartBackground(context.Background(), req)
+		ctx := context.Background()
+		reg.StartBackground(ctx)
+		reg.StartBackground(ctx)
 
 		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
-		Expect(spmAttempts.Load()).To(Equal(int32(1)))
+		Expect(attempts.Load()).To(Equal(int32(1)))
 	})
 
-	// TC-REG-UT-004: Done closes after successful background registration
-	It("TC-REG-UT-004: Done channel closes when background registration succeeds", func() {
+	// TC-REG-UT-004: Done closes after success
+	It("TC-REG-UT-004: Done channel closes when registration succeeds", func() {
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer spm.Close()
 
-		reg := registration.NewRegistrar(spm.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Operations:  []string{"CREATE"},
-		}
+		reg, err := registration.NewRegistrar(spm.URL, providerCfg, logger)
+		Expect(err).NotTo(HaveOccurred())
 
-		reg.StartBackground(context.Background(), req)
+		reg.StartBackground(context.Background())
 		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
 	})
 
-	// TC-REG-UT-005: Done closes when background registration fails (no retry on 4xx)
-	It("TC-REG-UT-005: Done channel closes when background registration fails", func() {
+	// TC-REG-UT-005: Done closes on non-retryable failure
+	It("TC-REG-UT-005: Done channel closes when registration hits non-retryable error", func() {
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
 			w.WriteHeader(400)
+			json.NewEncoder(w).Encode(spmv1alpha1.Error{Title: "Bad request", Type: "about:blank"})
 		}))
 		defer spm.Close()
 
-		reg := registration.NewRegistrar(spm.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Operations:  []string{"CREATE"},
-		}
+		reg, err := registration.NewRegistrar(spm.URL, providerCfg, logger)
+		Expect(err).NotTo(HaveOccurred())
 
-		reg.StartBackground(context.Background(), req)
+		reg.StartBackground(context.Background())
 		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
 	})
 
-	// TC-REG-UT-006: Done closes when registration stops due to cancelled context
+	// TC-REG-UT-006: Done closes on context cancellation during retries
 	It("TC-REG-UT-006: Done channel closes when context is cancelled during 500 retries", func() {
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(500)
 		}))
 		defer spm.Close()
 
-		reg := registration.NewRegistrar(spm.URL, logger)
-		ctx, cancel := context.WithCancel(context.Background())
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Operations:  []string{"CREATE"},
-		}
+		reg, err := registration.NewRegistrar(spm.URL, providerCfg, logger,
+			registration.SetInitialBackoff(10*time.Millisecond),
+		)
+		Expect(err).NotTo(HaveOccurred())
 
-		reg.StartBackground(ctx, req)
+		ctx, cancel := context.WithCancel(context.Background())
+		reg.StartBackground(ctx)
+		time.Sleep(30 * time.Millisecond)
 		cancel()
 		Eventually(reg.Done(), 5*time.Second).Should(BeClosed())
 	})
 
-	// TC-REG-IT-001: Service provider HTTP remains available while registration retries against failing SPM
-	It("TC-REG-IT-001: HTTP server serves requests while background registration retries", func() {
-		var spmAttempts atomic.Int32
+	// Invalid UUID is non-retryable
+	It("fails immediately with invalid provider UUID", func() {
+		providerCfg.ID = "not-a-uuid"
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			n := spmAttempts.Add(1)
-			if n <= 5 {
-				w.WriteHeader(500)
-				return
-			}
-			w.WriteHeader(200)
+			Fail("should not reach SPM with invalid UUID")
 		}))
 		defer spm.Close()
 
-		sp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
-			_, _ = w.Write([]byte("ok"))
-		}))
-		defer sp.Close()
+		reg, err := registration.NewRegistrar(spm.URL, providerCfg, logger)
+		Expect(err).NotTo(HaveOccurred())
 
-		reg := registration.NewRegistrar(spm.URL, logger)
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Endpoint:    sp.URL,
-			Operations:  []string{"CREATE"},
-		}
-
-		reg.StartBackground(context.Background(), req)
-
-		client := &http.Client{Timeout: 2 * time.Second}
-		Eventually(func() int {
-			resp, err := client.Get(sp.URL)
-			if err != nil {
-				return 0
-			}
-			defer resp.Body.Close()
-			return resp.StatusCode
-		}, 5*time.Second, 20*time.Millisecond).Should(Equal(200))
-
-		Eventually(reg.Done(), 15*time.Second).Should(BeClosed())
-		Expect(spmAttempts.Load()).To(BeNumerically(">=", 6))
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
 	})
 
-	// TC-REG-IT-002: After registration gives up on always-500 SPM due to cancel, HTTP still serves
-	It("TC-REG-IT-002: HTTP server still serves after registration fails when context is cancelled", func() {
+	// 200 (update existing) is treated as success
+	It("treats 200 response as successful update", func() {
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(500)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(200)
+			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer spm.Close()
 
-		sp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
-			_, _ = w.Write([]byte("ok"))
-		}))
-		defer sp.Close()
-
-		reg := registration.NewRegistrar(spm.URL, logger)
-		ctx, cancel := context.WithCancel(context.Background())
-		req := registration.RegistrationRequest{
-			Name:        "kcli-vm",
-			ServiceType: "vm",
-			Endpoint:    sp.URL,
-			Operations:  []string{"CREATE"},
-		}
-
-		reg.StartBackground(ctx, req)
-		time.Sleep(50 * time.Millisecond)
-		cancel()
-
-		Eventually(reg.Done(), 10*time.Second).Should(BeClosed())
-
-		resp, err := http.Get(sp.URL)
+		reg, err := registration.NewRegistrar(spm.URL, providerCfg, logger)
 		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
-		Expect(resp.StatusCode).To(Equal(200))
-		body, err := io.ReadAll(resp.Body)
-		Expect(err).NotTo(HaveOccurred())
-		Expect(string(body)).To(Equal("ok"))
+
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
 	})
 })

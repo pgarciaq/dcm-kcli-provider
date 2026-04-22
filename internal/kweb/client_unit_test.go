@@ -143,29 +143,60 @@ var _ = Describe("Kweb Client", func() {
 		Expect(err).To(MatchError(kweb.ErrConflict))
 	})
 
-	// C-24: ListVMs
-	It("lists VMs from kweb", func() {
+	// C-24: ListVMs — kweb returns {"vms": [array of VM dicts]}
+	It("lists VMs from kweb with realistic response shape", func() {
 		mock.on("GET", "/vms", func(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{
-				"dcm-vm1": map[string]interface{}{"status": "up", "ip": "192.168.1.1"},
-				"dcm-vm2": map[string]interface{}{"status": "down"},
+				"vms": []map[string]interface{}{
+					{"name": "dcm-vm1", "status": "up", "ip": "192.168.1.1", "profile": "fedora-39", "plan": "myplan"},
+					{"name": "dcm-vm2", "status": "down", "profile": "centos"},
+				},
 			})
 		})
 		vms, err := c.ListVMs(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vms).To(HaveLen(2))
+		Expect(vms[0].Name).To(Equal("dcm-vm1"))
+		Expect(vms[0].Status).To(Equal("up"))
+		Expect(vms[0].IP).To(Equal("192.168.1.1"))
+		Expect(vms[0].Profile).To(Equal("fedora-39"))
 	})
 
-	// C-25: GetVM
-	It("gets a single VM by name", func() {
+	It("returns empty list when kweb has no VMs", func() {
+		mock.on("GET", "/vms", func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, 200, map[string]interface{}{"vms": []interface{}{}})
+		})
+		vms, err := c.ListVMs(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(vms).To(BeEmpty())
+	})
+
+	// C-25: GetVM — kweb returns flat dict with all VM fields
+	It("gets a single VM with full detail from kweb", func() {
 		mock.on("GET", "/vms/dcm-web", func(w http.ResponseWriter, r *http.Request) {
-			jsonResponse(w, 200, map[string]interface{}{"status": "up", "ip": "10.0.0.1"})
+			jsonResponse(w, 200, map[string]interface{}{
+				"name": "dcm-web", "status": "up", "ip": "10.0.0.1",
+				"numcpus": 4, "memory": 8192, "profile": "fedora-39",
+				"id": "abc-123", "creationdate": "17-04-2026 10:00",
+			})
 		})
 		vm, err := c.GetVM(ctx, "dcm-web")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(vm.Name).To(Equal("dcm-web"))
 		Expect(vm.Status).To(Equal("up"))
 		Expect(vm.IP).To(Equal("10.0.0.1"))
+		Expect(vm.NumCPUs).To(Equal(4))
+		Expect(vm.Memory).To(Equal(8192))
+		Expect(vm.Profile).To(Equal("fedora-39"))
+	})
+
+	// GetVM returns ErrNotFound for nonexistent VM (kweb returns {} with 200)
+	It("returns ErrNotFound when kweb returns empty object for nonexistent VM", func() {
+		mock.on("GET", "/vms/no-such-vm", func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, 200, map[string]interface{}{})
+		})
+		_, err := c.GetVM(ctx, "no-such-vm")
+		Expect(err).To(MatchError(kweb.ErrNotFound))
 	})
 
 	// C-26: DeleteVM
@@ -180,14 +211,29 @@ var _ = Describe("Kweb Client", func() {
 		Expect(called).To(BeTrue())
 	})
 
-	// C-27: ListProfiles
-	It("lists profiles from GET /vmprofiles", func() {
+	// C-27: ListProfiles — kweb returns {"profiles": {dict of name: config}}
+	It("lists profile names from GET /vmprofiles", func() {
 		mock.on("GET", "/vmprofiles", func(w http.ResponseWriter, r *http.Request) {
-			jsonResponse(w, 200, []string{"fedora-39", "centos-9", "ubuntu-22.04"})
+			jsonResponse(w, 200, map[string]interface{}{
+				"profiles": map[string]interface{}{
+					"fedora-39":    map[string]interface{}{"numcpus": 2, "memory": 4096},
+					"centos-9":     map[string]interface{}{"numcpus": 1, "memory": 2048},
+					"ubuntu-22.04": map[string]interface{}{"numcpus": 2},
+				},
+			})
 		})
 		profiles, err := c.ListProfiles(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(profiles).To(ConsistOf("fedora-39", "centos-9", "ubuntu-22.04"))
+	})
+
+	It("returns empty list when no profiles are configured", func() {
+		mock.on("GET", "/vmprofiles", func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, 200, map[string]interface{}{"profiles": map[string]interface{}{}})
+		})
+		profiles, err := c.ListProfiles(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(profiles).To(BeEmpty())
 	})
 
 	// ===== 3c: Cluster operations =====
@@ -222,31 +268,59 @@ var _ = Describe("Kweb Client", func() {
 		Expect(time.Since(start)).To(BeNumerically("<", 1*time.Second))
 	})
 
-	// C-30: ListClusters
-	It("lists clusters from GET /kubes", func() {
+	// C-30: ListClusters — kweb returns {"kubes": {dict of name: info}}
+	It("lists clusters from GET /kubes with realistic response shape", func() {
 		mock.on("GET", "/kubes", func(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{
-				"dcm-cluster1": map[string]interface{}{"status": "active"},
+				"kubes": map[string]interface{}{
+					"sno": map[string]interface{}{"type": "openshift", "plan": "sno", "vms": "sno-sno"},
+				},
 			})
 		})
 		clusters, err := c.ListClusters(ctx)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(clusters).To(HaveLen(1))
+		Expect(clusters[0].Name).To(Equal("sno"))
+		Expect(clusters[0].ClusterType).To(Equal("openshift"))
+		Expect(clusters[0].Plan).To(Equal("sno"))
+		Expect(clusters[0].VMs).To(Equal("sno-sno"))
 	})
 
-	// C-31: GetCluster
-	It("gets a single cluster by name", func() {
+	It("returns empty list when no clusters exist", func() {
+		mock.on("GET", "/kubes", func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, 200, map[string]interface{}{"kubes": map[string]interface{}{}})
+		})
+		clusters, err := c.ListClusters(ctx)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(clusters).To(BeEmpty())
+	})
+
+	// C-31: GetCluster — kweb returns {nodes: [[...]], version: "..."}
+	It("gets cluster detail with nodes and version from kweb", func() {
 		mock.on("GET", "/kubes/dcm-edge", func(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{
-				"status":  "active",
-				"version": "v1.30.2+k3s1",
+				"nodes": [][]string{
+					{"node1.local", "Ready", "control-plane,master", "24h", "v1.30.2", "10.0.0.1"},
+				},
+				"version": "version   4.21.9   True   False   24h   Cluster version is 4.21.9",
 			})
 		})
 		cl, err := c.GetCluster(ctx, "dcm-edge")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cl.Name).To(Equal("dcm-edge"))
 		Expect(cl.Status).To(Equal("active"))
-		Expect(cl.Version).To(Equal("v1.30.2+k3s1"))
+		Expect(cl.Version).To(ContainSubstring("4.21.9"))
+		Expect(cl.Nodes).To(HaveLen(1))
+		Expect(cl.Nodes[0][0]).To(Equal("node1.local"))
+	})
+
+	// GetCluster returns ErrNotFound for nonexistent cluster (kweb returns {} with 200)
+	It("returns ErrNotFound when kweb returns empty object for nonexistent cluster", func() {
+		mock.on("GET", "/kubes/no-such-cluster", func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, 200, map[string]interface{}{})
+		})
+		_, err := c.GetCluster(ctx, "no-such-cluster")
+		Expect(err).To(MatchError(kweb.ErrNotFound))
 	})
 
 	// C-32: DeleteCluster
@@ -328,5 +402,34 @@ var _ = Describe("Kweb Client", func() {
 		var kErr *kweb.KwebError
 		Expect(errors.As(err, &kErr)).To(BeTrue())
 		Expect(kErr.StatusCode).To(Equal(503))
+	})
+
+	// HTML error bodies (kweb returns HTML 500 for many Python exceptions)
+	It("handles HTML error bodies from kweb without crashing", func() {
+		htmlError := `<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<html><head><title>Error: 500 Internal Server Error</title></head>
+<body><h1>Error: 500 Internal Server Error</h1></body></html>`
+		mock.on("DELETE", "/vms/dcm-gone", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(500)
+			w.Write([]byte(htmlError))
+		})
+		err := c.DeleteVM(ctx, "dcm-gone")
+		Expect(err).To(HaveOccurred())
+		var kErr *kweb.KwebError
+		Expect(errors.As(err, &kErr)).To(BeTrue())
+		Expect(kErr.StatusCode).To(Equal(500))
+		Expect(kErr.Reason).To(ContainSubstring("HTML error"))
+	})
+
+	// kweb POST /vms returning result:failure with 200 status code
+	It("detects failure result in 200 response body", func() {
+		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, 200, map[string]string{"result": "failure", "reason": "VM already exists"})
+		})
+		err := c.CreateVM(ctx, "dcm-dup", "fedora", nil)
+		Expect(err).To(HaveOccurred())
+		var kErr *kweb.KwebError
+		Expect(errors.As(err, &kErr)).To(BeTrue())
+		Expect(kErr.Reason).To(ContainSubstring("already exists"))
 	})
 })

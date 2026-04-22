@@ -15,15 +15,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/chi/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	apiserver "github.com/pgarciaq/dcm-kcli-provider/internal/api/server"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/config"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
-	"github.com/pgarciaq/dcm-kcli-provider/internal/handlers"
-	v1alpha1 "github.com/pgarciaq/dcm-kcli-provider/internal/handlers/v1alpha1"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/kweb"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/monitor"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/store"
@@ -36,7 +35,6 @@ func freePort() string {
 	return addr
 }
 
-// slogSafeBuffer serializes writes and reads for -race when multiple goroutines log concurrently.
 type slogSafeBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
@@ -56,12 +54,14 @@ func (s *slogSafeBuffer) String() string {
 
 var _ = Describe("Lifecycle", func() {
 
-	// C-80: SP starts, self-probes /health, registration starts after self-probe
 	It("starts, self-probes /health, then registration begins", func() {
 		var registrationReceived atomic.Int32
 		spmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			registrationReceived.Add(1)
-			w.WriteHeader(200)
+			id := "test-id"
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": "kcli-vm"})
 		}))
 		defer spmServer.Close()
 
@@ -70,11 +70,11 @@ var _ = Describe("Lifecycle", func() {
 			case "/host":
 				w.WriteHeader(200)
 			case "/vmprofiles":
-				json.NewEncoder(w).Encode([]string{"fedora-39"})
+				json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{"fedora-39": map[string]interface{}{}}})
 			case "/vms":
-				json.NewEncoder(w).Encode(map[string]interface{}{})
+				json.NewEncoder(w).Encode(map[string]interface{}{"vms": []interface{}{}})
 			case "/kubes":
-				json.NewEncoder(w).Encode(map[string]interface{}{})
+				json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
 			default:
 				w.WriteHeader(404)
 			}
@@ -98,17 +98,12 @@ var _ = Describe("Lifecycle", func() {
 		}
 		mon := monitor.New(kwebClient, stateStore, pub, monCfg, logger)
 
-		healthH := handlers.NewHealthHandler(kwebClient, "0.1.0")
-		vmH := v1alpha1.NewVMHandler(kwebClient, stateStore, pub, mon)
-		_ = v1alpha1.NewClusterHandler(kwebClient, stateStore, pub)
+		impl := apiserver.NewStrictServerImpl(kwebClient, stateStore, pub, mon, "0.1.0")
+		strictHandler := apiserver.NewStrictHandler(impl, nil)
 
 		addr := freePort()
 		r := chi.NewRouter()
-		r.Get("/health", healthH.ServeHTTP)
-		r.Route("/api/v1alpha1", func(r chi.Router) {
-			r.Post("/vms", vmH.Create)
-			r.Get("/vms", vmH.List)
-		})
+		apiserver.HandlerFromMuxWithBaseURL(strictHandler, r, "/api/v1alpha1")
 
 		listener, err := net.Listen("tcp", addr)
 		Expect(err).NotTo(HaveOccurred())
@@ -119,7 +114,7 @@ var _ = Describe("Lifecycle", func() {
 
 		client := &http.Client{Timeout: 2 * time.Second}
 		Eventually(func() int {
-			resp, err := client.Get(fmt.Sprintf("http://%s/health", addr))
+			resp, err := client.Get(fmt.Sprintf("http://%s/api/v1alpha1/health", addr))
 			if err != nil {
 				return 0
 			}
@@ -130,13 +125,17 @@ var _ = Describe("Lifecycle", func() {
 		stateStore.Close()
 	})
 
-	// C-81: SP calls GET /vmprofiles on startup and logs available profiles
 	It("fetches and logs available VM profiles on startup", func() {
 		var profilesCalled atomic.Int32
 		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/vmprofiles" {
 				profilesCalled.Add(1)
-				json.NewEncoder(w).Encode([]string{"fedora-39", "centos-9"})
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"profiles": map[string]interface{}{
+						"fedora-39": map[string]interface{}{"numcpus": 2},
+						"centos-9":  map[string]interface{}{"numcpus": 1},
+					},
+				})
 				return
 			}
 			if r.URL.Path == "/host" {
@@ -154,7 +153,6 @@ var _ = Describe("Lifecycle", func() {
 		Expect(profilesCalled.Load()).To(Equal(int32(1)))
 	})
 
-	// C-82: SP shuts down gracefully on SIGTERM
 	It("shuts down gracefully: HTTP drains, NATS closes, bbolt closes", func() {
 		dir := GinkgoT().TempDir()
 		storePath := filepath.Join(dir, "state.db")
@@ -165,7 +163,7 @@ var _ = Describe("Lifecycle", func() {
 
 		addr := freePort()
 		r := chi.NewRouter()
-		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		r.Get("/api/v1alpha1/health", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
 		})
 
@@ -186,7 +184,6 @@ var _ = Describe("Lifecycle", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
-	// C-83: Shutdown within timeout, logs warning if exceeded
 	It("logs warning when shutdown timeout is exceeded", func() {
 		addr := freePort()
 
@@ -195,7 +192,7 @@ var _ = Describe("Lifecycle", func() {
 			time.Sleep(5 * time.Second)
 			w.WriteHeader(200)
 		})
-		r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		r.Get("/api/v1alpha1/health", func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(200)
 		})
 
@@ -214,7 +211,6 @@ var _ = Describe("Lifecycle", func() {
 		Expect(err).To(HaveOccurred())
 	})
 
-	// C-84: REQUEST_TIMEOUT middleware returns 504 when handler exceeds deadline
 	It("returns 504 when handler exceeds request timeout", func() {
 		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(3 * time.Second)
@@ -255,10 +251,12 @@ var _ = Describe("Lifecycle", func() {
 		Expect(resp.StatusCode).To(Equal(504))
 	})
 
-	// TC-LIFE-UT-001: Startup/shutdown lifecycle messages in slog (gaps 15–17 companion: server lifecycle observability)
 	It("TC-LIFE-UT-001: logs HTTP server listening, self-probe succeeded, shutdown signal, and graceful shutdown complete", func() {
 		spmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+			id := "test-id"
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(201)
+			json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": "kcli-vm"})
 		}))
 		defer spmServer.Close()
 
@@ -267,11 +265,11 @@ var _ = Describe("Lifecycle", func() {
 			case "/host":
 				w.WriteHeader(200)
 			case "/vmprofiles":
-				json.NewEncoder(w).Encode([]string{"fedora-39"})
+				json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{"fedora-39": map[string]interface{}{}}})
 			case "/vms":
-				json.NewEncoder(w).Encode(map[string]interface{}{})
+				json.NewEncoder(w).Encode(map[string]interface{}{"vms": []interface{}{}})
 			case "/kubes":
-				json.NewEncoder(w).Encode(map[string]interface{}{})
+				json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
 			default:
 				w.WriteHeader(404)
 			}

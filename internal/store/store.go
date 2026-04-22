@@ -13,7 +13,17 @@ var (
 	ErrNotFound   = errors.New("resource not found")
 	bucketName    = []byte("resources")
 	nameIdxBucket = []byte("name_index")
+	metaBucket    = []byte("meta")
+	versionKey    = []byte("schema_version")
 )
+
+const currentSchemaVersion = 1
+
+type MigrationFunc func(tx *bolt.Tx) error
+
+var migrations = []MigrationFunc{
+	// Index 0 is version 0 -> 1 (initial schema, no-op since New() creates the buckets)
+}
 
 type ResourceEntry struct {
 	ID        string    `json:"id"`
@@ -37,19 +47,69 @@ func New(path string) (*Store, error) {
 		if _, err := tx.CreateBucketIfNotExists(bucketName); err != nil {
 			return err
 		}
-		_, err := tx.CreateBucketIfNotExists(nameIdxBucket)
-		return err
+		if _, err := tx.CreateBucketIfNotExists(nameIdxBucket); err != nil {
+			return err
+		}
+		mb, err := tx.CreateBucketIfNotExists(metaBucket)
+		if err != nil {
+			return err
+		}
+		return runMigrations(tx, mb)
 	})
 	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("creating buckets: %w", err)
+		return nil, fmt.Errorf("initializing store: %w", err)
 	}
 
 	return &Store{db: db}, nil
 }
 
+func SchemaVersion(db *bolt.DB) (int, error) {
+	var version int
+	err := db.View(func(tx *bolt.Tx) error {
+		mb := tx.Bucket(metaBucket)
+		if mb == nil {
+			return nil
+		}
+		v := mb.Get(versionKey)
+		if v == nil {
+			return nil
+		}
+		return json.Unmarshal(v, &version)
+	})
+	return version, err
+}
+
+func runMigrations(tx *bolt.Tx, mb *bolt.Bucket) error {
+	var storedVersion int
+	v := mb.Get(versionKey)
+	if v != nil {
+		if err := json.Unmarshal(v, &storedVersion); err != nil {
+			return fmt.Errorf("reading schema version: %w", err)
+		}
+	}
+
+	for i := storedVersion; i < currentSchemaVersion; i++ {
+		if i < len(migrations) {
+			if err := migrations[i](tx); err != nil {
+				return fmt.Errorf("migration %d -> %d failed: %w", i, i+1, err)
+			}
+		}
+	}
+
+	data, err := json.Marshal(currentSchemaVersion)
+	if err != nil {
+		return err
+	}
+	return mb.Put(versionKey, data)
+}
+
 func (s *Store) Close() error {
 	return s.db.Close()
+}
+
+func (s *Store) DB() *bolt.DB {
+	return s.db
 }
 
 func (s *Store) Put(entry ResourceEntry) error {

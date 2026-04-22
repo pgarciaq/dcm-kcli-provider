@@ -171,4 +171,24 @@ var _ = Describe("Store", func() {
 		_, err := s.FindByKcliName("dcm-unknown")
 		Expect(err).To(MatchError(store.ErrNotFound))
 	})
+
+	// Phase 5: Store schema versioning
+	It("sets schema version on new store", func() {
+		version, err := store.SchemaVersion(s.DB())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(version).To(Equal(1))
+	})
+
+	It("preserves schema version across close and reopen", func() {
+		Expect(s.Close()).To(Succeed())
+		s = nil
+
+		s2, err := store.New(path)
+		Expect(err).NotTo(HaveOccurred())
+		defer s2.Close()
+
+		version, err := store.SchemaVersion(s2.DB())
+		Expect(err).NotTo(HaveOccurred())
+		Expect(version).To(Equal(1))
+	})
 })
