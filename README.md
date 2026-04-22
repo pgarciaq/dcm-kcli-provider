@@ -11,8 +11,10 @@ or [ACM Cluster SP](https://github.com/dcm-project/acm-cluster-service-provider)
 
 ## Status
 
-**Enhancement proposal phase.** See
-[enhancements/kcli-sp/kcli-sp.md](enhancements/kcli-sp/kcli-sp.md) for the
+**Working prototype.** The provider implements VM and Cluster lifecycle
+(create, get, list, delete) against kweb, with OpenAPI-first request
+validation, SPM registration, NATS status events, and bbolt persistence.
+See [enhancements/kcli-sp/kcli-sp.md](enhancements/kcli-sp/kcli-sp.md) for the
 full design document.
 
 ## Overview
@@ -36,16 +38,39 @@ clusters through DCM without deploying a Kubernetes management stack.
 
 ## Development
 
+### Prerequisites
+
+- Go 1.25+
+- [golangci-lint](https://golangci-lint.run/)
+- [Spectral CLI](https://github.com/stoplightio/spectral) (for AEP linting)
+
 ### Building
 
 ```bash
 make build
 ```
 
+### Testing
+
+```bash
+make test          # run all Ginkgo suites with -race
+make test-cover    # run with coverage
+make lint          # golangci-lint
+make check         # lint + test
+```
+
 ### Code Generation
 
 ```bash
-make generate-api
+make generate-api          # regenerate types, server, client from OpenAPI spec
+make check-generate-api    # verify generated files are in sync (used by CI)
+make check-aep             # verify OpenAPI spec passes AEP linting (used by CI)
+```
+
+### Local Development with Docker Compose
+
+```bash
+docker compose up --build
 ```
 
 ### Releasing

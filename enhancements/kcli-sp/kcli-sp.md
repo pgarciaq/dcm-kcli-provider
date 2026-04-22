@@ -1056,13 +1056,13 @@ re-associating a handful of resources.
 |---------|----------------|
 | `cmd/dcm-kcli-provider` | Entry point, config loading, wiring |
 | `internal/config` | Environment variable parsing |
-| `internal/handlers/v1alpha1` | HTTP handlers for VMs, clusters |
-| `internal/handlers` | Health handler (root `/health`) |
+| `internal/api/server` | `StrictServerInterface` implementation (VM, cluster, health handlers) |
+| `internal/handlers` | Shared middleware (panic recovery, RFC 7807 problem writer) |
 | `internal/kweb` | kweb HTTP client, error normalization, rate limiting |
-| `internal/store` | bbolt persistent state store |
+| `internal/store` | bbolt persistent state store with schema versioning |
 | `internal/monitor` | Polling-based status monitor with debounce |
 | `internal/events` | NATS CloudEvents publisher |
-| `internal/registration` | Dual SPM registration (VM + cluster) |
+| `internal/registration` | SPM registration using generated client |
 | `api/v1alpha1` | OpenAPI spec and generated types |
 | `pkg/client` | Generated HTTP client for consumers |
 
