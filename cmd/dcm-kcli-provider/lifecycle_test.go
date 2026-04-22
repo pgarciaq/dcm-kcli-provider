@@ -31,7 +31,7 @@ import (
 func freePort() string {
 	l, _ := net.Listen("tcp", "127.0.0.1:0")
 	addr := l.Addr().String()
-	l.Close()
+	_ = l.Close()
 	return addr
 }
 
@@ -61,7 +61,7 @@ var _ = Describe("Lifecycle", func() {
 			id := "test-id"
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(201)
-			json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": "kcli-vm"})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": "kcli-vm"})
 		}))
 		defer spmServer.Close()
 
@@ -70,11 +70,11 @@ var _ = Describe("Lifecycle", func() {
 			case "/host":
 				w.WriteHeader(200)
 			case "/vmprofiles":
-				json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{"fedora-39": map[string]interface{}{}}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{"fedora-39": map[string]interface{}{}}})
 			case "/vms":
-				json.NewEncoder(w).Encode(map[string]interface{}{"vms": []interface{}{}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"vms": []interface{}{}})
 			case "/kubes":
-				json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
 			default:
 				w.WriteHeader(404)
 			}
@@ -109,8 +109,8 @@ var _ = Describe("Lifecycle", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		httpServer := &http.Server{Handler: r}
-		go httpServer.Serve(listener)
-		defer httpServer.Shutdown(context.Background())
+		go func() { _ = httpServer.Serve(listener) }()
+		defer func() { _ = httpServer.Shutdown(context.Background()) }()
 
 		client := &http.Client{Timeout: 2 * time.Second}
 		Eventually(func() int {
@@ -118,11 +118,11 @@ var _ = Describe("Lifecycle", func() {
 			if err != nil {
 				return 0
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return resp.StatusCode
 		}).Should(Equal(200))
 
-		stateStore.Close()
+		_ = stateStore.Close()
 	})
 
 	It("fetches and logs available VM profiles on startup", func() {
@@ -130,7 +130,7 @@ var _ = Describe("Lifecycle", func() {
 		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/vmprofiles" {
 				profilesCalled.Add(1)
-				json.NewEncoder(w).Encode(map[string]interface{}{
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"profiles": map[string]interface{}{
 						"fedora-39": map[string]interface{}{"numcpus": 2},
 						"centos-9":  map[string]interface{}{"numcpus": 1},
@@ -142,7 +142,7 @@ var _ = Describe("Lifecycle", func() {
 				w.WriteHeader(200)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{})
 		}))
 		defer kwebServer.Close()
 
@@ -171,7 +171,7 @@ var _ = Describe("Lifecycle", func() {
 		Expect(err).NotTo(HaveOccurred())
 
 		httpServer := &http.Server{Handler: r}
-		go httpServer.Serve(listener)
+		go func() { _ = httpServer.Serve(listener) }()
 
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -199,7 +199,7 @@ var _ = Describe("Lifecycle", func() {
 		listener, err := net.Listen("tcp", addr)
 		Expect(err).NotTo(HaveOccurred())
 		httpServer := &http.Server{Handler: r}
-		go httpServer.Serve(listener)
+		go func() { _ = httpServer.Serve(listener) }()
 
 		client := &http.Client{Timeout: 10 * time.Second}
 		go client.Get(fmt.Sprintf("http://%s/slow", addr))
@@ -241,8 +241,8 @@ var _ = Describe("Lifecycle", func() {
 		listener, err := net.Listen("tcp", addr)
 		Expect(err).NotTo(HaveOccurred())
 		httpServer := &http.Server{Handler: r}
-		go httpServer.Serve(listener)
-		defer httpServer.Shutdown(context.Background())
+		go func() { _ = httpServer.Serve(listener) }()
+		defer func() { _ = httpServer.Shutdown(context.Background()) }()
 
 		client := &http.Client{Timeout: 5 * time.Second}
 		resp, err := client.Get(fmt.Sprintf("http://%s/api/v1alpha1/vms", addr))
@@ -256,7 +256,7 @@ var _ = Describe("Lifecycle", func() {
 			id := "test-id"
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(201)
-			json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": "kcli-vm"})
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": "kcli-vm"})
 		}))
 		defer spmServer.Close()
 
@@ -265,11 +265,11 @@ var _ = Describe("Lifecycle", func() {
 			case "/host":
 				w.WriteHeader(200)
 			case "/vmprofiles":
-				json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{"fedora-39": map[string]interface{}{}}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{"fedora-39": map[string]interface{}{}}})
 			case "/vms":
-				json.NewEncoder(w).Encode(map[string]interface{}{"vms": []interface{}{}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"vms": []interface{}{}})
 			case "/kubes":
-				json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
 			default:
 				w.WriteHeader(404)
 			}
