@@ -332,11 +332,11 @@ func (c *Client) parseResponse(resp *http.Response) error {
 		var structured map[string]interface{}
 		if err := json.Unmarshal(data, &structured); err == nil {
 			if result, ok := structured["result"].(string); ok && result == "failure" {
-				kErr := &KwebError{StatusCode: resp.StatusCode}
-				if reason, ok := structured["reason"].(string); ok {
-					kErr.Reason = reason
+				reason, _ := structured["reason"].(string)
+				if strings.Contains(strings.ToLower(reason), "already exists") {
+					return ErrConflict
 				}
-				return kErr
+				return &KwebError{StatusCode: resp.StatusCode, Reason: reason}
 			}
 		}
 		return nil

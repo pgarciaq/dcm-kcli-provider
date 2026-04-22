@@ -1,0 +1,19 @@
+{
+  "api_version": "v1alpha1",
+  "display_name": "K3s Cluster",
+  "spec": {
+    "service_type": "cluster",
+    "fields": [
+      {
+        "path": "cluster_type",
+        "display_name": "Cluster Type",
+        "default": "k3s",
+        "editable": true,
+        "validation_schema": {
+          "type": "string",
+          "enum": ["k3s", "openshift", "microshift"]
+        }
+      }
+    ]
+  }
+}

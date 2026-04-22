@@ -1,0 +1,8 @@
+{
+  "api_version": "v1alpha1",
+  "display_name": "Route VMs to kcli",
+  "description": "Routes all VM requests to the kcli-vm provider. Adjust the selected_provider value to match your provider name.",
+  "policy_type": "GLOBAL",
+  "priority": 100,
+  "rego_code": "package authz\nimport rego.v1\nmain := {\"selected_provider\": \"kcli-vm\"}"
+}

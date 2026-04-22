@@ -1,0 +1,40 @@
+{
+  "api_version": "v1alpha1",
+  "display_name": "Fedora VM",
+  "spec": {
+    "service_type": "vm",
+    "fields": [
+      {
+        "path": "guest_os.type",
+        "display_name": "OS Image",
+        "default": "fedora41",
+        "editable": true,
+        "validation_schema": {
+          "type": "string",
+          "enum": ["fedora41", "ubuntu2004", "centos9stream"]
+        }
+      },
+      {
+        "path": "memory.size",
+        "display_name": "Memory",
+        "default": "2GB",
+        "editable": true,
+        "validation_schema": {
+          "type": "string",
+          "enum": ["1GB", "2GB", "4GB", "8GB"]
+        }
+      },
+      {
+        "path": "vcpu.count",
+        "display_name": "vCPUs",
+        "default": 2,
+        "editable": true,
+        "validation_schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        }
+      }
+    ]
+  }
+}

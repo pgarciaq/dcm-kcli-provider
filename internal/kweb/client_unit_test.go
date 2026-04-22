@@ -421,15 +421,24 @@ var _ = Describe("Kweb Client", func() {
 		Expect(kErr.Reason).To(ContainSubstring("HTML error"))
 	})
 
-	// kweb POST /vms returning result:failure with 200 status code
-	It("detects failure result in 200 response body", func() {
+	// kweb POST /vms returning result:failure with "already exists" in 200 response
+	It("detects conflict from failure result in 200 response body", func() {
 		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, 200, map[string]string{"result": "failure", "reason": "VM already exists"})
 		})
 		err := c.CreateVM(ctx, "dcm-dup", "fedora", nil)
 		Expect(err).To(HaveOccurred())
+		Expect(errors.Is(err, kweb.ErrConflict)).To(BeTrue())
+	})
+
+	It("detects generic failure from 200 response body", func() {
+		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
+			jsonResponse(w, 200, map[string]string{"result": "failure", "reason": "quota exceeded"})
+		})
+		err := c.CreateVM(ctx, "dcm-dup", "fedora", nil)
+		Expect(err).To(HaveOccurred())
 		var kErr *kweb.KwebError
 		Expect(errors.As(err, &kErr)).To(BeTrue())
-		Expect(kErr.Reason).To(ContainSubstring("already exists"))
+		Expect(kErr.Reason).To(ContainSubstring("quota exceeded"))
 	})
 })
