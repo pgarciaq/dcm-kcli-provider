@@ -1083,6 +1083,28 @@ re-associating a handful of resources.
 - **State store tests:** Verify store persistence across SP restarts,
   orphan detection, and behavior on store loss.
 
+### Implementation Status
+
+141 Ginkgo specs across 8 suites, all passing with `--race`. The following
+items were audited and intentionally deferred:
+
+#### Accepted as-is
+
+| Item | Rationale |
+|------|-----------|
+| Profile validation when cache is empty | When the profile cache has not yet populated (e.g. kweb unreachable on first poll), `CreateVM` allows any profile through. This is acceptable because kweb itself rejects unknown profiles with an error that the SP already maps to HTTP 400. Adding a hard block would make VMs uncreatable during the first poll interval even when kweb is healthy. |
+| RFC 7807 `instance` field not set on handler errors | The `StrictServerInterface` pattern does not expose the HTTP request path to handler methods. Setting `instance` would require passing it through context or a middleware. The `type`, `title`, `status`, and `detail` fields are all present and correct. |
+| TC-REG-IT-001 / TC-REG-IT-002 (integration-level registration tests) | These test that `/health` stays 200 while SPM registration fails or context is cancelled mid-retry. The registrar has 12 unit specs covering retry, backoff, non-retryable errors, context cancellation, and idempotent `StartBackground`. The lifecycle test `TC-LIFE-UT-001` validates the full startup→registration→shutdown flow with real `Server` wiring. Adding a dedicated integration test would provide marginal coverage. |
+| `DEGRADED` cluster status | The proposal defines a `DEGRADED` status for clusters with partial node readiness. kweb's `GET /kubes/{name}` does not expose per-node health; it only returns a node list and a version string. Without upstream kweb support, this cannot be reliably implemented. If kweb adds health data, the monitor's `deriveClusterStatus` can be extended. |
+
+#### Known limitations
+
+| Limitation | Notes |
+|------------|-------|
+| kweb `DELETE /vms/{name}` returns HTML 500 | Filed as [karmab/kcli#863](https://github.com/karmab/kcli/issues/863). The SP correctly detects and reports this as a kweb error. Workaround: `kcli delete vm <name> -y`. |
+| OpenAPI validator middleware vs base URL | The `nethttpmiddleware.OapiRequestValidatorWithOptions` middleware is wired on the chi router and works correctly with the `servers[0].url` base path from the OpenAPI spec. Earlier attempts to combine it with `HandlerWithOptions` caused path mismatches; the current approach (middleware on router, then `HandlerFromMuxWithBaseURL`) follows the kubevirt-service-provider pattern and works. |
+| Store migrations list is empty | `store.go` has a schema versioning framework with `currentSchemaVersion = 1` and a `runMigrations` hook. No migrations exist yet because the schema has not changed. When the schema evolves, migrations are added to the `migrations` slice. |
+
 ### Upgrade / Downgrade Strategy
 
 The kcli SP is stateless except for the persistent bbolt state store.
