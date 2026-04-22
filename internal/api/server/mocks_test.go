@@ -28,7 +28,7 @@ type mockKweb struct {
 	healthResult        bool
 }
 
-func (m *mockKweb) CreateVM(_ context.Context, name, profile string, params map[string]interface{}) error {
+func (m *mockKweb) CreateVM(_ context.Context, name string, _ string, _ map[string]interface{}) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.lastCreateVMName = name
@@ -53,14 +53,14 @@ func (m *mockKweb) GetVM(_ context.Context, name string) (*kweb.VMInfo, error) {
 	return &kweb.VMInfo{Name: name}, nil
 }
 
-func (m *mockKweb) DeleteVM(_ context.Context, name string) error {
+func (m *mockKweb) DeleteVM(_ context.Context, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deleteVMCalled = true
 	return m.deleteVMErr
 }
 
-func (m *mockKweb) CreateCluster(_ context.Context, name, clusterType string, params map[string]interface{}) error {
+func (m *mockKweb) CreateCluster(_ context.Context, _, _ string, _ map[string]interface{}) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.createClusterErr
@@ -81,7 +81,7 @@ func (m *mockKweb) GetCluster(_ context.Context, name string) (*kweb.ClusterInfo
 	return &kweb.ClusterInfo{Name: name}, nil
 }
 
-func (m *mockKweb) DeleteCluster(_ context.Context, name string) error {
+func (m *mockKweb) DeleteCluster(_ context.Context, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.deleteClusterCalled = true
@@ -159,7 +159,7 @@ func (m *mockStore) ResolveKcliName(dcmID string) (string, error) {
 func (m *mockStore) allEntries() []store.ResourceEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var result []store.ResourceEntry
+	result := make([]store.ResourceEntry, 0, len(m.entries))
 	for _, e := range m.entries {
 		result = append(result, e)
 	}
@@ -215,7 +215,7 @@ type slowCreateKweb struct {
 	maxConcurrent atomic.Int32
 }
 
-func (s *slowCreateKweb) CreateCluster(_ context.Context, name, clusterType string, params map[string]interface{}) error {
+func (s *slowCreateKweb) CreateCluster(_ context.Context, _, _ string, _ map[string]interface{}) error {
 	cur := s.concurrent.Add(1)
 	for {
 		old := s.maxConcurrent.Load()

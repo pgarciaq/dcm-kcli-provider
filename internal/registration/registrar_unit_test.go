@@ -41,13 +41,13 @@ var _ = Describe("Registrar", func() {
 	// C-76: Registration sends POST /providers with correct payload using SPM client
 	It("sends POST to /providers with snake_case fields and schema_version", func() {
 		var receivedBody spmv1alpha1.Provider
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			Expect(r.Method).To(Equal("POST"))
-			Expect(r.URL.Path).To(Equal("/providers"))
-			Expect(r.URL.Query().Get("id")).To(Equal(validUUID))
-			json.NewDecoder(r.Body).Decode(&receivedBody)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			Expect(req.Method).To(Equal("POST"))
+			Expect(req.URL.Path).To(Equal("/providers"))
+			Expect(req.URL.Query().Get("id")).To(Equal(validUUID))
+			json.NewDecoder(req.Body).Decode(&receivedBody)
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(201)
+			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer server.Close()
@@ -67,10 +67,10 @@ var _ = Describe("Registrar", func() {
 	// C-77: Registration works for cluster service type too
 	It("registers cluster service type successfully", func() {
 		var receivedBody spmv1alpha1.Provider
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			json.NewDecoder(r.Body).Decode(&receivedBody)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			json.NewDecoder(req.Body).Decode(&receivedBody)
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(201)
+			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-cluster"})
 		}))
 		defer server.Close()
@@ -93,14 +93,14 @@ var _ = Describe("Registrar", func() {
 	// C-78: Retries with exponential backoff on 500
 	It("retries with exponential backoff on server error", func() {
 		var attempts atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			n := attempts.Add(1)
 			if n <= 2 {
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(201)
+			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer server.Close()
@@ -118,8 +118,8 @@ var _ = Describe("Registrar", func() {
 
 	// C-79: Stops retrying when context is cancelled
 	It("stops retrying when context is cancelled during backoff", func() {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(500)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		defer server.Close()
 
@@ -138,10 +138,10 @@ var _ = Describe("Registrar", func() {
 	// TC-REG-UT-001: 400 from SPM is non-retryable
 	It("TC-REG-UT-001: SPM 400 causes immediate failure without retry", func() {
 		var attempts atomic.Int32
-		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts.Add(1)
 			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(400)
+			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(spmv1alpha1.Error{Title: "Invalid config", Type: "about:blank"})
 		}))
 		defer spm.Close()
@@ -159,10 +159,10 @@ var _ = Describe("Registrar", func() {
 	// TC-REG-UT-002: 409 from SPM is non-retryable
 	It("TC-REG-UT-002: SPM 409 causes immediate failure without retry", func() {
 		var attempts atomic.Int32
-		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts.Add(1)
 			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(409)
+			w.WriteHeader(http.StatusConflict)
 			json.NewEncoder(w).Encode(spmv1alpha1.Error{Title: "Conflict", Type: "about:blank"})
 		}))
 		defer spm.Close()
@@ -180,10 +180,10 @@ var _ = Describe("Registrar", func() {
 	// TC-REG-UT-003: StartBackground is idempotent
 	It("TC-REG-UT-003: calling StartBackground twice only registers once", func() {
 		var attempts atomic.Int32
-		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			attempts.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(201)
+			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer spm.Close()
@@ -201,9 +201,9 @@ var _ = Describe("Registrar", func() {
 
 	// TC-REG-UT-004: Done closes after success
 	It("TC-REG-UT-004: Done channel closes when registration succeeds", func() {
-		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(201)
+			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer spm.Close()
@@ -217,9 +217,9 @@ var _ = Describe("Registrar", func() {
 
 	// TC-REG-UT-005: Done closes on non-retryable failure
 	It("TC-REG-UT-005: Done channel closes when registration hits non-retryable error", func() {
-		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/problem+json")
-			w.WriteHeader(400)
+			w.WriteHeader(http.StatusBadRequest)
 			json.NewEncoder(w).Encode(spmv1alpha1.Error{Title: "Bad request", Type: "about:blank"})
 		}))
 		defer spm.Close()
@@ -233,8 +233,8 @@ var _ = Describe("Registrar", func() {
 
 	// TC-REG-UT-006: Done closes on context cancellation during retries
 	It("TC-REG-UT-006: Done channel closes when context is cancelled during 500 retries", func() {
-		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(500)
+		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
 		}))
 		defer spm.Close()
 
@@ -253,7 +253,7 @@ var _ = Describe("Registrar", func() {
 	// Invalid UUID is non-retryable
 	It("fails immediately with invalid provider UUID", func() {
 		providerCfg.ID = "not-a-uuid"
-		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spm := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 			Fail("should not reach SPM with invalid UUID")
 		}))
 		defer spm.Close()
@@ -267,9 +267,9 @@ var _ = Describe("Registrar", func() {
 
 	// 200 (update existing) is treated as success
 	It("treats 200 response as successful update", func() {
-		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
 		}))
 		defer spm.Close()

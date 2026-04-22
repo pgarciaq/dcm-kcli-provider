@@ -1,3 +1,4 @@
+// Package store provides a bbolt-backed persistent key-value store for resource state.
 package store
 
 import (
@@ -143,7 +144,7 @@ func (s *Store) Get(id string) (*ResourceEntry, error) {
 func (s *Store) List(resourceType string) ([]ResourceEntry, error) {
 	var entries []ResourceEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketName).ForEach(func(k, v []byte) error {
+		return tx.Bucket(bucketName).ForEach(func(_, v []byte) error {
 			var entry ResourceEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
 				return err
@@ -160,7 +161,7 @@ func (s *Store) List(resourceType string) ([]ResourceEntry, error) {
 func (s *Store) ListByStatus(resourceType, status string) ([]ResourceEntry, error) {
 	var entries []ResourceEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketName).ForEach(func(k, v []byte) error {
+		return tx.Bucket(bucketName).ForEach(func(_, v []byte) error {
 			var entry ResourceEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
 				return err
@@ -237,7 +238,7 @@ func (s *Store) FindByKcliName(name string) (*ResourceEntry, error) {
 func (s *Store) ListAll() ([]ResourceEntry, error) {
 	var entries []ResourceEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketName).ForEach(func(k, v []byte) error {
+		return tx.Bucket(bucketName).ForEach(func(_, v []byte) error {
 			var entry ResourceEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
 				return err

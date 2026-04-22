@@ -489,7 +489,7 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 	}, nil
 }
 
-func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersRequestObject) (ListClustersResponseObject, error) {
+func (s *StrictServerImpl) ListClusters(_ context.Context, req ListClustersRequestObject) (ListClustersResponseObject, error) {
 	maxPageSize := 50
 	if req.Params.MaxPageSize != nil && *req.Params.MaxPageSize > 0 {
 		maxPageSize = *req.Params.MaxPageSize

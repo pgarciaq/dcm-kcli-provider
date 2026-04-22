@@ -1,3 +1,4 @@
+// Package events provides CloudEvents publishing over NATS for resource status updates.
 package events
 
 import (

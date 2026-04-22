@@ -37,7 +37,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-16: JSON error normalization — asserts Reason and StatusCode
 	It("normalizes JSON error with result/reason fields into KwebError with Reason", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 400, map[string]string{"result": "failure", "reason": "bad"})
 		})
 		err := c.CreateVM(ctx, "test", "fedora", nil)
@@ -50,8 +50,8 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-17: Plain string error normalization — typed KwebError with Reason
 	It("normalizes plain string error body into KwebError with Reason", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(400)
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte("Invalid data"))
 		})
 		err := c.CreateVM(ctx, "test", "fedora", nil)
@@ -64,9 +64,9 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-18: Empty body error — StatusCode set, Reason empty
 	It("normalizes empty JSON body {} with HTTP 400 into KwebError with StatusCode", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(400)
+			w.WriteHeader(http.StatusBadRequest)
 			w.Write([]byte("{}"))
 		})
 		err := c.CreateVM(ctx, "test", "fedora", nil)
@@ -87,8 +87,8 @@ var _ = Describe("Kweb Client", func() {
 	// C-20: Timeout on hanging kweb returns ErrKwebUnreachable
 	It("returns ErrKwebUnreachable when kweb hangs past timeout", func() {
 		shortClient := kweb.NewClient(mock.url(), 100*time.Millisecond)
-		mock.on("POST", "/vms", delayedHandler(2*time.Second, func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+		mock.on("POST", "/vms", delayedHandler(2*time.Second, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
 		}))
 		err := shortClient.CreateVM(ctx, "test", "fedora", nil)
 		Expect(err).To(HaveOccurred())
@@ -100,10 +100,10 @@ var _ = Describe("Kweb Client", func() {
 	// C-21: CreateVM sends POST /vms with correct body including prefixed name
 	It("sends POST /vms with name and profile in JSON body", func() {
 		var receivedBody map[string]interface{}
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
-			body, _ := io.ReadAll(r.Body)
+		mock.on("POST", "/vms", func(w http.ResponseWriter, req *http.Request) {
+			body, _ := io.ReadAll(req.Body)
 			json.Unmarshal(body, &receivedBody)
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		})
 		err := c.CreateVM(ctx, "dcm-web-server", "fedora-39", map[string]interface{}{
 			"parameters[memory]":  4096,
@@ -118,8 +118,8 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-22: CreateVM success on HTTP 200
 	It("returns success on HTTP 200", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
 		})
 		err := c.CreateVM(ctx, "dcm-test", "fedora", nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -127,7 +127,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-23: CreateVM ErrConflict on "already exists" body (kweb uses 400, not 409)
 	It("returns ErrConflict on kweb 'already exists' error", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 400, map[string]string{"result": "failure", "reason": "VM already exists"})
 		})
 		err := c.CreateVM(ctx, "dcm-test", "fedora", nil)
@@ -136,7 +136,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-23b: ErrConflict also detected on "conflict" in reason
 	It("returns ErrConflict when reason contains 'conflict'", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 400, map[string]string{"result": "failure", "reason": "name conflict"})
 		})
 		err := c.CreateVM(ctx, "dcm-test", "fedora", nil)
@@ -145,7 +145,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-24: ListVMs — kweb returns {"vms": [array of VM dicts]}
 	It("lists VMs from kweb with realistic response shape", func() {
-		mock.on("GET", "/vms", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/vms", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{
 				"vms": []map[string]interface{}{
 					{"name": "dcm-vm1", "status": "up", "ip": "192.168.1.1", "profile": "fedora-39", "plan": "myplan"},
@@ -163,7 +163,7 @@ var _ = Describe("Kweb Client", func() {
 	})
 
 	It("returns empty list when kweb has no VMs", func() {
-		mock.on("GET", "/vms", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/vms", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{"vms": []interface{}{}})
 		})
 		vms, err := c.ListVMs(ctx)
@@ -173,7 +173,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-25: GetVM — kweb returns flat dict with all VM fields
 	It("gets a single VM with full detail from kweb", func() {
-		mock.on("GET", "/vms/dcm-web", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/vms/dcm-web", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{
 				"name": "dcm-web", "status": "up", "ip": "10.0.0.1",
 				"numcpus": 4, "memory": 8192, "profile": "fedora-39",
@@ -192,7 +192,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// GetVM returns ErrNotFound for nonexistent VM (kweb returns {} with 200)
 	It("returns ErrNotFound when kweb returns empty object for nonexistent VM", func() {
-		mock.on("GET", "/vms/no-such-vm", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/vms/no-such-vm", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{})
 		})
 		_, err := c.GetVM(ctx, "no-such-vm")
@@ -202,9 +202,9 @@ var _ = Describe("Kweb Client", func() {
 	// C-26: DeleteVM
 	It("sends DELETE /vms/{name}", func() {
 		var called bool
-		mock.on("DELETE", "/vms/dcm-test", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("DELETE", "/vms/dcm-test", func(w http.ResponseWriter, _ *http.Request) {
 			called = true
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		})
 		err := c.DeleteVM(ctx, "dcm-test")
 		Expect(err).NotTo(HaveOccurred())
@@ -213,7 +213,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-27: ListProfiles — kweb returns {"profiles": {dict of name: config}}
 	It("lists profile names from GET /vmprofiles", func() {
-		mock.on("GET", "/vmprofiles", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/vmprofiles", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{
 				"profiles": map[string]interface{}{
 					"fedora-39":    map[string]interface{}{"numcpus": 2, "memory": 4096},
@@ -228,7 +228,7 @@ var _ = Describe("Kweb Client", func() {
 	})
 
 	It("returns empty list when no profiles are configured", func() {
-		mock.on("GET", "/vmprofiles", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/vmprofiles", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{"profiles": map[string]interface{}{}})
 		})
 		profiles, err := c.ListProfiles(ctx)
@@ -241,10 +241,10 @@ var _ = Describe("Kweb Client", func() {
 	// C-28: CreateCluster sends POST /kubes with name and cluster type
 	It("sends POST /kubes with name and cluster type in JSON body", func() {
 		var receivedBody map[string]interface{}
-		mock.on("POST", "/kubes", func(w http.ResponseWriter, r *http.Request) {
-			body, _ := io.ReadAll(r.Body)
+		mock.on("POST", "/kubes", func(w http.ResponseWriter, req *http.Request) {
+			body, _ := io.ReadAll(req.Body)
 			json.Unmarshal(body, &receivedBody)
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		})
 		err := c.CreateCluster(ctx, "dcm-edge", "k3s", map[string]interface{}{
 			"ctlplanes": 1,
@@ -259,8 +259,8 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-29: CreateCluster returns immediately (not blocking)
 	It("returns immediately from cluster creation", func() {
-		mock.on("POST", "/kubes", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+		mock.on("POST", "/kubes", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
 		})
 		start := time.Now()
 		err := c.CreateCluster(ctx, "dcm-test", "k3s", nil)
@@ -270,7 +270,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-30: ListClusters — kweb returns {"kubes": {dict of name: info}}
 	It("lists clusters from GET /kubes with realistic response shape", func() {
-		mock.on("GET", "/kubes", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/kubes", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{
 				"kubes": map[string]interface{}{
 					"sno": map[string]interface{}{"type": "openshift", "plan": "sno", "vms": "sno-sno"},
@@ -287,7 +287,7 @@ var _ = Describe("Kweb Client", func() {
 	})
 
 	It("returns empty list when no clusters exist", func() {
-		mock.on("GET", "/kubes", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/kubes", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{"kubes": map[string]interface{}{}})
 		})
 		clusters, err := c.ListClusters(ctx)
@@ -297,7 +297,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-31: GetCluster — kweb returns {nodes: [[...]], version: "..."}
 	It("gets cluster detail with nodes and version from kweb", func() {
-		mock.on("GET", "/kubes/dcm-edge", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/kubes/dcm-edge", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{
 				"nodes": [][]string{
 					{"node1.local", "Ready", "control-plane,master", "24h", "v1.30.2", "10.0.0.1"},
@@ -316,7 +316,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// GetCluster returns ErrNotFound for nonexistent cluster (kweb returns {} with 200)
 	It("returns ErrNotFound when kweb returns empty object for nonexistent cluster", func() {
-		mock.on("GET", "/kubes/no-such-cluster", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("GET", "/kubes/no-such-cluster", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]interface{}{})
 		})
 		_, err := c.GetCluster(ctx, "no-such-cluster")
@@ -326,9 +326,9 @@ var _ = Describe("Kweb Client", func() {
 	// C-32: DeleteCluster
 	It("sends DELETE /kubes/{name}", func() {
 		var called bool
-		mock.on("DELETE", "/kubes/dcm-edge", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("DELETE", "/kubes/dcm-edge", func(w http.ResponseWriter, _ *http.Request) {
 			called = true
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		})
 		err := c.DeleteCluster(ctx, "dcm-edge")
 		Expect(err).NotTo(HaveOccurred())
@@ -339,8 +339,8 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-33: CheckHealth returns healthy on 200
 	It("returns healthy when kweb responds 200 to GET /host", func() {
-		mock.on("GET", "/host", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+		mock.on("GET", "/host", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
 		})
 		healthy, err := c.CheckHealth(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -349,8 +349,8 @@ var _ = Describe("Kweb Client", func() {
 
 	// C-34: CheckHealth returns unhealthy on non-200
 	It("returns unhealthy on non-200 response", func() {
-		mock.on("GET", "/host", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(500)
+		mock.on("GET", "/host", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
 		})
 		healthy, err := c.CheckHealth(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -367,8 +367,8 @@ var _ = Describe("Kweb Client", func() {
 
 	// TC-KWB-ERR-001: HTTP 404 maps to KwebError with StatusCode 404
 	It("TC-KWB-ERR-001: HTTP 404 from kweb yields KwebError with StatusCode 404", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(404)
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
 			w.Write([]byte("not found"))
 		})
 		err := c.CreateVM(ctx, "test", "fedora", nil)
@@ -380,8 +380,8 @@ var _ = Describe("Kweb Client", func() {
 
 	// TC-KWB-ERR-002: HTTP 500 maps to KwebError with StatusCode 500
 	It("TC-KWB-ERR-002: HTTP 500 from kweb yields KwebError with StatusCode 500", func() {
-		mock.on("GET", "/vms", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(500)
+		mock.on("GET", "/vms", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("internal error"))
 		})
 		_, err := c.ListVMs(ctx)
@@ -393,8 +393,8 @@ var _ = Describe("Kweb Client", func() {
 
 	// TC-KWB-ERR-003: HTTP 503 maps to KwebError with StatusCode 503
 	It("TC-KWB-ERR-003: HTTP 503 from kweb yields KwebError with StatusCode 503", func() {
-		mock.on("DELETE", "/vms/dcm-x", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(503)
+		mock.on("DELETE", "/vms/dcm-x", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusServiceUnavailable)
 			w.Write([]byte("unavailable"))
 		})
 		err := c.DeleteVM(ctx, "dcm-x")
@@ -409,8 +409,8 @@ var _ = Describe("Kweb Client", func() {
 		htmlError := `<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
 <html><head><title>Error: 500 Internal Server Error</title></head>
 <body><h1>Error: 500 Internal Server Error</h1></body></html>`
-		mock.on("DELETE", "/vms/dcm-gone", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(500)
+		mock.on("DELETE", "/vms/dcm-gone", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte(htmlError))
 		})
 		err := c.DeleteVM(ctx, "dcm-gone")
@@ -423,7 +423,7 @@ var _ = Describe("Kweb Client", func() {
 
 	// kweb POST /vms returning result:failure with "already exists" in 200 response
 	It("detects conflict from failure result in 200 response body", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]string{"result": "failure", "reason": "VM already exists"})
 		})
 		err := c.CreateVM(ctx, "dcm-dup", "fedora", nil)
@@ -432,7 +432,7 @@ var _ = Describe("Kweb Client", func() {
 	})
 
 	It("detects generic failure from 200 response body", func() {
-		mock.on("POST", "/vms", func(w http.ResponseWriter, r *http.Request) {
+		mock.on("POST", "/vms", func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, 200, map[string]string{"result": "failure", "reason": "quota exceeded"})
 		})
 		err := c.CreateVM(ctx, "dcm-dup", "fedora", nil)

@@ -13,9 +13,9 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/go-chi/chi/v5"
+	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
 
 	apiv1alpha1 "github.com/pgarciaq/dcm-kcli-provider/api/v1alpha1"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/api/server"
@@ -57,7 +57,8 @@ func vmBody(name, guestOS string, opts ...func(map[string]interface{})) string {
 		opt(spec)
 	}
 	body := map[string]interface{}{"spec": spec}
-	b, _ := json.Marshal(body)
+	b, err := json.Marshal(body)
+	Expect(err).NotTo(HaveOccurred())
 	return string(b)
 }
 
@@ -83,7 +84,8 @@ func clusterBody(name string, opts ...func(map[string]interface{})) string {
 		opt(spec)
 	}
 	body := map[string]interface{}{"spec": spec}
-	b, _ := json.Marshal(body)
+	b, err := json.Marshal(body)
+	Expect(err).NotTo(HaveOccurred())
 	return string(b)
 }
 
@@ -122,7 +124,8 @@ func vmBodyCatalogStyle(guestOS string, opts ...func(map[string]interface{})) st
 		opt(spec)
 	}
 	body := map[string]interface{}{"spec": spec}
-	b, _ := json.Marshal(body)
+	b, err := json.Marshal(body)
+	Expect(err).NotTo(HaveOccurred())
 	return string(b)
 }
 
@@ -135,7 +138,8 @@ func clusterBodyCatalogStyle(opts ...func(map[string]interface{})) string {
 		opt(spec)
 	}
 	body := map[string]interface{}{"spec": spec}
-	b, _ := json.Marshal(body)
+	b, err := json.Marshal(body)
+	Expect(err).NotTo(HaveOccurred())
 	return string(b)
 }
 
@@ -161,7 +165,7 @@ var _ = Describe("Handlers", func() {
 	// ====== Health handlers ======
 
 	It("returns 200 with pass, version, and uptime when kweb is healthy", func() {
-		req := httptest.NewRequest("GET", "/api/v1alpha1/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/health", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -176,7 +180,7 @@ var _ = Describe("Handlers", func() {
 
 	It("returns 503 with fail status and message when kweb is unhealthy", func() {
 		kwebMock.healthResult = false
-		req := httptest.NewRequest("GET", "/api/v1alpha1/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/health", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -190,7 +194,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("GET /vms/health returns 200 when kweb is healthy", func() {
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms/health", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -202,7 +206,7 @@ var _ = Describe("Handlers", func() {
 
 	It("GET /vms/health returns 503 when kweb is unhealthy", func() {
 		kwebMock.healthResult = false
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms/health", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -210,7 +214,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("GET /clusters/health returns 200 when kweb is healthy", func() {
-		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/health", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -222,7 +226,7 @@ var _ = Describe("Handlers", func() {
 
 	It("GET /clusters/health returns 503 when kweb is unhealthy", func() {
 		kwebMock.healthResult = false
-		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/health", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -233,7 +237,7 @@ var _ = Describe("Handlers", func() {
 
 	It("creates a VM and returns 201 with id, status, path, and spec", func() {
 		body := vmBody("web-server", "fedora-39", withMemory("4GB"), withVcpu(2))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -248,7 +252,7 @@ var _ = Describe("Handlers", func() {
 
 	It("uses client-supplied ?id when present", func() {
 		body := vmBody("idtest", "fedora-39", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=my-custom-id", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms?id=my-custom-id", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -261,7 +265,7 @@ var _ = Describe("Handlers", func() {
 
 	It("generates UUID when ?id is absent", func() {
 		body := vmBody("noid", "fedora-39", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -273,7 +277,7 @@ var _ = Describe("Handlers", func() {
 
 	It("stores entry in bbolt with prefixed kcli name", func() {
 		body := vmBody("my-vm", "fedora-39", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -284,7 +288,7 @@ var _ = Describe("Handlers", func() {
 
 	It("returns 400 when profile is not found", func() {
 		body := vmBody("x", "nonexistent-os", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -305,8 +309,9 @@ var _ = Describe("Handlers", func() {
 				"kcli": map[string]interface{}{"profile": "fedora-39"},
 			},
 		}
-		b, _ := json.Marshal(map[string]interface{}{"spec": spec})
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBuffer(b))
+		b, err := json.Marshal(map[string]interface{}{"spec": spec})
+		Expect(err).NotTo(HaveOccurred())
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBuffer(b))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -316,7 +321,7 @@ var _ = Describe("Handlers", func() {
 	It("returns 409 when VM already exists", func() {
 		kwebMock.createVMErr = kweb.ErrConflict
 		body := vmBody("dup", "fedora-39", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -326,7 +331,7 @@ var _ = Describe("Handlers", func() {
 	It("returns 502 when kweb is unreachable on create", func() {
 		kwebMock.createVMErr = kweb.ErrKwebUnreachable
 		body := vmBody("x", "fedora-39", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -342,7 +347,7 @@ var _ = Describe("Handlers", func() {
 			{Name: "other-vm", Status: "up"},
 		}
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -358,7 +363,7 @@ var _ = Describe("Handlers", func() {
 		storeMock.Put(store.ResourceEntry{ID: "p2", KcliName: "dcm-p2", Type: "vm", Status: "RUNNING"})
 		storeMock.Put(store.ResourceEntry{ID: "p3", KcliName: "dcm-p3", Type: "vm", Status: "RUNNING"})
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms?max_page_size=1", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms?max_page_size=1", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -374,7 +379,7 @@ var _ = Describe("Handlers", func() {
 		storeMock.Put(store.ResourceEntry{ID: "vm-1", KcliName: "dcm-vm1", Type: "vm", Status: "RUNNING"})
 		kwebMock.listVMsErr = kweb.ErrKwebUnreachable
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -384,7 +389,7 @@ var _ = Describe("Handlers", func() {
 	It("returns VM with id, status, path, and spec containing user-facing name", func() {
 		storeMock.Put(store.ResourceEntry{ID: "vm-get", KcliName: "dcm-pretty", Type: "vm", Status: "RUNNING"})
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms/vm-get", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms/vm-get", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -400,7 +405,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("returns 404 for unknown VM ID", func() {
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms/nonexistent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms/nonexistent", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -411,7 +416,7 @@ var _ = Describe("Handlers", func() {
 	It("deletes VM, publishes DELETED event, removes from store", func() {
 		storeMock.Put(store.ResourceEntry{ID: "vm-del", KcliName: "dcm-delvm", Type: "vm", Status: "RUNNING"})
 
-		req := httptest.NewRequest("DELETE", "/api/v1alpha1/vms/vm-del", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1alpha1/vms/vm-del", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -422,11 +427,11 @@ var _ = Describe("Handlers", func() {
 		Expect(evts[0].Event.Status).To(Equal("DELETED"))
 
 		entries := storeMock.allEntries()
-		Expect(entries).To(HaveLen(0))
+		Expect(entries).To(BeEmpty())
 	})
 
 	It("returns 404 when deleting unknown VM", func() {
-		req := httptest.NewRequest("DELETE", "/api/v1alpha1/vms/unknown", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1alpha1/vms/unknown", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -437,7 +442,7 @@ var _ = Describe("Handlers", func() {
 
 	It("creates a k3s cluster and returns 201 with id, status, path, and spec", func() {
 		body := clusterBody("edge-cluster", withClusterType("k3s"), withNodes(1, 2))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -452,7 +457,7 @@ var _ = Describe("Handlers", func() {
 
 	It("uses client-supplied ?id for cluster create", func() {
 		body := clusterBody("cidtest", withClusterType("k3s"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters?id=cluster-custom-id", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters?id=cluster-custom-id", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -464,7 +469,7 @@ var _ = Describe("Handlers", func() {
 
 	It("stores cluster entry with prefixed name", func() {
 		body := clusterBody("my-cluster", withClusterType("k3s"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -475,7 +480,7 @@ var _ = Describe("Handlers", func() {
 
 	It("defaults to generic cluster type when provider_hints omitted", func() {
 		body := clusterBody("default-type")
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -484,7 +489,7 @@ var _ = Describe("Handlers", func() {
 
 	It("rejects unsupported cluster type with 400", func() {
 		body := clusterBody("x", withClusterType("banana"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -493,7 +498,7 @@ var _ = Describe("Handlers", func() {
 
 	It("C-70: rejects cluster type 'kind' with 400", func() {
 		body := clusterBody("x", withClusterType("kind"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -512,7 +517,7 @@ var _ = Describe("Handlers", func() {
 			{Name: "external-cluster", Status: "active"},
 		}
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -528,7 +533,7 @@ var _ = Describe("Handlers", func() {
 		storeMock.Put(store.ResourceEntry{ID: "cl-2", KcliName: "dcm-cl2", Type: "cluster", Status: "ACTIVE"})
 		storeMock.Put(store.ResourceEntry{ID: "cl-3", KcliName: "dcm-cl3", Type: "cluster", Status: "ACTIVE"})
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters?max_page_size=1", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters?max_page_size=1", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -543,7 +548,7 @@ var _ = Describe("Handlers", func() {
 	It("returns cluster with id, status, path, and spec with user-facing name", func() {
 		storeMock.Put(store.ResourceEntry{ID: "cl-get", KcliName: "dcm-myedge", Type: "cluster", Status: "ACTIVE"})
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters/cl-get", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/cl-get", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -557,7 +562,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("returns 404 with RFC 7807 for unknown cluster ID", func() {
-		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters/nonexistent", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/nonexistent", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -572,7 +577,7 @@ var _ = Describe("Handlers", func() {
 	It("deletes cluster, publishes DELETED event, removes from store", func() {
 		storeMock.Put(store.ResourceEntry{ID: "cl-del", KcliName: "dcm-delcl", Type: "cluster", Status: "ACTIVE"})
 
-		req := httptest.NewRequest("DELETE", "/api/v1alpha1/clusters/cl-del", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1alpha1/clusters/cl-del", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -583,7 +588,7 @@ var _ = Describe("Handlers", func() {
 		Expect(evts[0].Event.Status).To(Equal("DELETED"))
 
 		entries := storeMock.allEntries()
-		Expect(entries).To(HaveLen(0))
+		Expect(entries).To(BeEmpty())
 	})
 
 	// ====== HTTP hardening ======
@@ -591,7 +596,7 @@ var _ = Describe("Handlers", func() {
 	It("C-58: returns 400 when spec is missing from VM create body", func() {
 		validationRouter := buildRouterWithValidation(impl)
 		body := `{"not_spec": "invalid"}`
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		validationRouter.ServeHTTP(w, req)
@@ -600,7 +605,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("TC-HDL-POST-UT-018: returns 400 for empty body on POST /api/v1alpha1/vms", func() {
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(""))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(""))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -608,7 +613,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("TC-HDL-POST-UT-019: returns 400 for empty body on POST /api/v1alpha1/clusters", func() {
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(""))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(""))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -619,11 +624,11 @@ var _ = Describe("Handlers", func() {
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		panicRouter := chi.NewRouter()
 		panicRouter.Use(handlers.PanicRecovery(logger))
-		panicRouter.Get("/panic", func(w http.ResponseWriter, r *http.Request) {
+		panicRouter.Get("/panic", func(_ http.ResponseWriter, _ *http.Request) {
 			panic("test panic")
 		})
 
-		req := httptest.NewRequest("GET", "/panic", nil)
+		req := httptest.NewRequest(http.MethodGet, "/panic", nil)
 		w := httptest.NewRecorder()
 		panicRouter.ServeHTTP(w, req)
 
@@ -637,7 +642,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("TC-HTTP-UT-004: returns 400 for malformed JSON on POST /api/v1alpha1/vms", func() {
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString("{invalid json"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString("{invalid json"))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -645,7 +650,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("TC-HTTP-UT-005: returns 400 for malformed JSON on POST /api/v1alpha1/clusters", func() {
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString("{invalid json"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString("{invalid json"))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -653,7 +658,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("TC-HLT-UT-007: uptime increases across successive health checks", func() {
-		req1 := httptest.NewRequest("GET", "/api/v1alpha1/health", nil)
+		req1 := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/health", nil)
 		w1 := httptest.NewRecorder()
 		router.ServeHTTP(w1, req1)
 		var body1 map[string]interface{}
@@ -662,7 +667,7 @@ var _ = Describe("Handlers", func() {
 
 		time.Sleep(1100 * time.Millisecond)
 
-		req2 := httptest.NewRequest("GET", "/api/v1alpha1/health", nil)
+		req2 := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/health", nil)
 		w2 := httptest.NewRecorder()
 		router.ServeHTTP(w2, req2)
 		var body2 map[string]interface{}
@@ -676,7 +681,7 @@ var _ = Describe("Handlers", func() {
 		kwebMock.deleteVMErr = errors.New("kweb delete should not be invoked")
 		storeMock.Put(store.ResourceEntry{ID: "vm-del2", KcliName: "dcm-dying", Type: "vm", Status: "DELETING"})
 
-		req := httptest.NewRequest("DELETE", "/api/v1alpha1/vms/vm-del2", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1alpha1/vms/vm-del2", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -688,7 +693,7 @@ var _ = Describe("Handlers", func() {
 		kwebMock.deleteClusterErr = errors.New("kweb delete should not be invoked")
 		storeMock.Put(store.ResourceEntry{ID: "cl-del2", KcliName: "dcm-dying-cl", Type: "cluster", Status: "DELETING"})
 
-		req := httptest.NewRequest("DELETE", "/api/v1alpha1/clusters/cl-del2", nil)
+		req := httptest.NewRequest(http.MethodDelete, "/api/v1alpha1/clusters/cl-del2", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -699,7 +704,7 @@ var _ = Describe("Handlers", func() {
 	It("TC-HDL-GET-UT-010: returns 200 with DELETING status for VM in store", func() {
 		storeMock.Put(store.ResourceEntry{ID: "vm-deling", KcliName: "dcm-winddown", Type: "vm", Status: "DELETING"})
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms/vm-deling", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms/vm-deling", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -712,7 +717,7 @@ var _ = Describe("Handlers", func() {
 	It("TC-HDL-GET-UT-011: returns 200 with DELETING status for cluster in store", func() {
 		storeMock.Put(store.ResourceEntry{ID: "cl-deling", KcliName: "dcm-winddown-cl", Type: "cluster", Status: "DELETING"})
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters/cl-deling", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/cl-deling", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -732,7 +737,7 @@ var _ = Describe("Handlers", func() {
 			})
 		}
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms?max_page_size=0", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms?max_page_size=0", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -747,7 +752,7 @@ var _ = Describe("Handlers", func() {
 	It("TC-HDL-LST-UT-004: invalid page_token returns 400", func() {
 		storeMock.Put(store.ResourceEntry{ID: "t1", KcliName: "dcm-t1", Type: "vm", Status: "RUNNING"})
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms?page_token=not-a-number", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms?page_token=not-a-number", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -758,7 +763,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("TC-HDL-LST-UT-005: empty VM list returns empty results array", func() {
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -767,14 +772,14 @@ var _ = Describe("Handlers", func() {
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		results, ok := resp["results"].([]interface{})
 		Expect(ok).To(BeTrue())
-		Expect(results).To(HaveLen(0))
+		Expect(results).To(BeEmpty())
 	})
 
 	It("TC-HDL-LST-UT-006: max_page_size larger than total returns all VMs", func() {
 		storeMock.Put(store.ResourceEntry{ID: "a1", KcliName: "dcm-a1", Type: "vm", Status: "RUNNING"})
 		storeMock.Put(store.ResourceEntry{ID: "a2", KcliName: "dcm-a2", Type: "vm", Status: "RUNNING"})
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms?max_page_size=100", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms?max_page_size=100", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -789,7 +794,7 @@ var _ = Describe("Handlers", func() {
 	It("TC-HDL-CRT-UT-020: VM creation rolls back kweb when store.Put fails", func() {
 		storeMock.putErr = errors.New("persist failed")
 		body := vmBody("rollback-vm", "fedora-39", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -811,14 +816,14 @@ var _ = Describe("Handlers", func() {
 
 		done := make(chan int, 2)
 		go func() {
-			req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body1))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body1))
 			w := httptest.NewRecorder()
 			serialRouter.ServeHTTP(w, req)
 			done <- w.Code
 		}()
 		time.Sleep(10 * time.Millisecond)
 		go func() {
-			req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body2))
+			req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body2))
 			w := httptest.NewRecorder()
 			serialRouter.ServeHTTP(w, req)
 			done <- w.Code
@@ -834,7 +839,7 @@ var _ = Describe("Handlers", func() {
 	It("TC-HDL-CRT-UT-021: cluster creation rolls back kweb when store.Put fails", func() {
 		storeMock.putErr = errors.New("persist failed")
 		body := clusterBody("rollback-cl", withClusterType("k3s"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -849,7 +854,7 @@ var _ = Describe("Handlers", func() {
 
 	It("creates VM without metadata when ?id is provided (catalog flow)", func() {
 		body := vmBodyCatalogStyle("fedora-39", withMemory("2GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=spm-instance-123", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms?id=spm-instance-123", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -865,7 +870,7 @@ var _ = Describe("Handlers", func() {
 
 	It("creates VM without metadata or ?id, generates short UUID name", func() {
 		body := vmBodyCatalogStyle("fedora-39", withMemory("2GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -879,7 +884,7 @@ var _ = Describe("Handlers", func() {
 	It("creates VM without guest_os, defaults to fedora41 profile", func() {
 		profiles.profiles = append(profiles.profiles, "fedora41")
 		body := vmBodyCatalogStyle("")
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=no-os-vm", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms?id=no-os-vm", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -890,7 +895,7 @@ var _ = Describe("Handlers", func() {
 		validationRouter := buildRouterWithValidation(impl)
 		profiles.profiles = append(profiles.profiles, "fedora41")
 		body := vmBodyCatalogStyle("")
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=minimal-vm", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms?id=minimal-vm", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		validationRouter.ServeHTTP(w, req)
@@ -900,7 +905,7 @@ var _ = Describe("Handlers", func() {
 
 	It("creates cluster without metadata when ?id is provided (catalog flow)", func() {
 		body := clusterBodyCatalogStyle(withClusterType("k3s"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters?id=spm-cluster-456", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters?id=spm-cluster-456", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -916,7 +921,7 @@ var _ = Describe("Handlers", func() {
 
 	It("creates cluster without metadata or ?id, generates short UUID name", func() {
 		body := clusterBodyCatalogStyle(withClusterType("k3s"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -932,7 +937,7 @@ var _ = Describe("Handlers", func() {
 	It("returns 409 when cluster already exists (conflict from kweb)", func() {
 		kwebMock.createClusterErr = kweb.ErrConflict
 		body := clusterBody("dup-cl", withClusterType("k3s"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -948,7 +953,7 @@ var _ = Describe("Handlers", func() {
 			{Name: "dcm-enriched", Status: "up", IP: "10.0.0.42"},
 		}
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -966,7 +971,7 @@ var _ = Describe("Handlers", func() {
 		storeMock.Put(store.ResourceEntry{ID: "vm-degrade", KcliName: "dcm-deg", Type: "vm", Status: "RUNNING"})
 		kwebMock.listVMsErr = errors.New("kweb timeout or parse error")
 
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -981,7 +986,7 @@ var _ = Describe("Handlers", func() {
 		storeMock.Put(store.ResourceEntry{ID: "idem-vm-1", KcliName: "dcm-idem-vm-1", Type: "vm", Status: "RUNNING"})
 		kwebMock.createVMErr = errors.New("kweb should not be called")
 		body := vmBody("idem-vm", "fedora-39", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=idem-vm-1", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms?id=idem-vm-1", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -996,7 +1001,7 @@ var _ = Describe("Handlers", func() {
 		storeMock.Put(store.ResourceEntry{ID: "idem-cl-1", KcliName: "dcm-idem-cl-1", Type: "cluster", Status: "ACTIVE"})
 		kwebMock.createClusterErr = errors.New("kweb should not be called")
 		body := clusterBody("idem-cl", withClusterType("k3s"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters?id=idem-cl-1", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters?id=idem-cl-1", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -1010,7 +1015,7 @@ var _ = Describe("Handlers", func() {
 	It("OpenAPI validation rejects ?id= with path-unsafe characters", func() {
 		validationRouter := buildRouterWithValidation(impl)
 		body := vmBody("safe-vm", "fedora-39", withMemory("4GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=foo/bar", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms?id=foo/bar", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		validationRouter.ServeHTTP(w, req)
@@ -1020,7 +1025,7 @@ var _ = Describe("Handlers", func() {
 
 	It("metadata.name takes precedence over ?id for kcli name", func() {
 		body := vmBody("explicit-name", "fedora-39", withMemory("2GB"))
-		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=spm-provided-id", bytes.NewBufferString(body))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms?id=spm-provided-id", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 

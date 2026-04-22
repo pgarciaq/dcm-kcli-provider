@@ -51,7 +51,9 @@ func (m *mockKweb) url() string {
 func jsonResponse(w http.ResponseWriter, code int, body interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(body)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		panic(err)
+	}
 }
 
 func delayedHandler(delay time.Duration, handler http.HandlerFunc) http.HandlerFunc {

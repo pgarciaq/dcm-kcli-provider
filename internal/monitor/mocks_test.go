@@ -132,7 +132,7 @@ func (m *memStore) Put(e store.ResourceEntry) {
 func (m *memStore) List(resourceType string) ([]store.ResourceEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var result []store.ResourceEntry
+	result := make([]store.ResourceEntry, 0, len(m.entries))
 	for _, e := range m.entries {
 		if e.Type == resourceType {
 			result = append(result, e)
@@ -144,7 +144,7 @@ func (m *memStore) List(resourceType string) ([]store.ResourceEntry, error) {
 func (m *memStore) ListAll() ([]store.ResourceEntry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var result []store.ResourceEntry
+	result := make([]store.ResourceEntry, 0, len(m.entries))
 	for _, e := range m.entries {
 		result = append(result, e)
 	}

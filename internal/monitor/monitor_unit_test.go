@@ -371,6 +371,6 @@ var _ = Describe("Monitor", func() {
 		mon.PollOnce(context.Background())
 
 		evts := pub.allEvents()
-		Expect(evts).To(HaveLen(0))
+		Expect(evts).To(BeEmpty())
 	})
 })

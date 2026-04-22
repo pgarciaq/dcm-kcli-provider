@@ -1,3 +1,4 @@
+// Package registration handles service provider registration with the DCM Service Provider Manager.
 package registration
 
 import (

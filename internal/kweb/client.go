@@ -1,3 +1,4 @@
+// Package kweb implements an HTTP client for the kcli web API (kweb).
 package kweb
 
 import (

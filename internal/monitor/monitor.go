@@ -1,3 +1,4 @@
+// Package monitor polls kweb for resource status changes and publishes events.
 package monitor
 
 import (
@@ -134,7 +135,6 @@ func (m *Monitor) pollVMs(ctx context.Context) {
 			_ = m.store.UpdateStatus(entry.ID, newStatus)
 		}
 	}
-
 }
 
 func (m *Monitor) pollClusters(ctx context.Context) {

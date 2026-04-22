@@ -55,11 +55,11 @@ func (s *slogSafeBuffer) String() string {
 var _ = Describe("Lifecycle", func() {
 	It("starts, self-probes /health, then registration begins", func() {
 		var registrationReceived atomic.Int32
-		spmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			registrationReceived.Add(1)
 			id := "test-id"
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(201)
+			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": "kcli-vm"})
 		}))
 		defer spmServer.Close()
@@ -67,7 +67,7 @@ var _ = Describe("Lifecycle", func() {
 		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/host":
-				w.WriteHeader(200)
+				w.WriteHeader(http.StatusOK)
 			case "/vmprofiles":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{"fedora-39": map[string]interface{}{}}})
 			case "/vms":
@@ -75,7 +75,7 @@ var _ = Describe("Lifecycle", func() {
 			case "/kubes":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
 			default:
-				w.WriteHeader(404)
+				w.WriteHeader(http.StatusNotFound)
 			}
 		}))
 		defer kwebServer.Close()
@@ -138,7 +138,7 @@ var _ = Describe("Lifecycle", func() {
 				return
 			}
 			if r.URL.Path == "/host" {
-				w.WriteHeader(200)
+				w.WriteHeader(http.StatusOK)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{})
@@ -162,8 +162,8 @@ var _ = Describe("Lifecycle", func() {
 
 		addr := freePort()
 		r := chi.NewRouter()
-		r.Get("/api/v1alpha1/health", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+		r.Get("/api/v1alpha1/health", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
 		})
 
 		listener, err := net.Listen("tcp", addr)
@@ -187,12 +187,12 @@ var _ = Describe("Lifecycle", func() {
 		addr := freePort()
 
 		r := chi.NewRouter()
-		r.Get("/slow", func(w http.ResponseWriter, r *http.Request) {
+		r.Get("/slow", func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(5 * time.Second)
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		})
-		r.Get("/api/v1alpha1/health", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(200)
+		r.Get("/api/v1alpha1/health", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
 		})
 
 		listener, err := net.Listen("tcp", addr)
@@ -211,9 +211,9 @@ var _ = Describe("Lifecycle", func() {
 	})
 
 	It("returns 504 when handler exceeds request timeout", func() {
-		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			time.Sleep(3 * time.Second)
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		}))
 		defer kwebServer.Close()
 
@@ -222,19 +222,19 @@ var _ = Describe("Lifecycle", func() {
 		r.Use(chimw.Timeout(200 * time.Millisecond))
 		r.Get("/api/v1alpha1/vms", func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()
-			req, _ := http.NewRequestWithContext(ctx, "GET", kwebServer.URL+"/vms", nil)
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, kwebServer.URL+"/vms", nil)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				select {
 				case <-ctx.Done():
 					return
 				default:
-					w.WriteHeader(502)
+					w.WriteHeader(http.StatusBadGateway)
 				}
 				return
 			}
 			defer func() { _ = resp.Body.Close() }()
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 		})
 
 		listener, err := net.Listen("tcp", addr)
@@ -251,10 +251,10 @@ var _ = Describe("Lifecycle", func() {
 	})
 
 	It("TC-LIFE-UT-001: logs HTTP server listening, self-probe succeeded, shutdown signal, and graceful shutdown complete", func() {
-		spmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		spmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			id := "test-id"
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(201)
+			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": id, "name": "kcli-vm"})
 		}))
 		defer spmServer.Close()
@@ -262,7 +262,7 @@ var _ = Describe("Lifecycle", func() {
 		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/host":
-				w.WriteHeader(200)
+				w.WriteHeader(http.StatusOK)
 			case "/vmprofiles":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{"fedora-39": map[string]interface{}{}}})
 			case "/vms":
@@ -270,7 +270,7 @@ var _ = Describe("Lifecycle", func() {
 			case "/kubes":
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
 			default:
-				w.WriteHeader(404)
+				w.WriteHeader(http.StatusNotFound)
 			}
 		}))
 		defer kwebServer.Close()
@@ -305,13 +305,9 @@ var _ = Describe("Lifecycle", func() {
 			errCh <- srv.Start(ctx)
 		}()
 
-		Eventually(func() string {
-			return buf.String()
-		}).WithTimeout(5 * time.Second).WithPolling(50 * time.Millisecond).Should(ContainSubstring("HTTP server listening"))
+		Eventually(buf.String).WithTimeout(5 * time.Second).WithPolling(50 * time.Millisecond).Should(ContainSubstring("HTTP server listening"))
 
-		Eventually(func() string {
-			return buf.String()
-		}).WithTimeout(5 * time.Second).WithPolling(50 * time.Millisecond).Should(ContainSubstring("self-probe succeeded"))
+		Eventually(buf.String).WithTimeout(5 * time.Second).WithPolling(50 * time.Millisecond).Should(ContainSubstring("self-probe succeeded"))
 
 		cancel()
 

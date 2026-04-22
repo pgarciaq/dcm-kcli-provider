@@ -1,3 +1,4 @@
+// Package handlers provides HTTP middleware and RFC 7807 problem detail responses.
 package handlers
 
 import (
