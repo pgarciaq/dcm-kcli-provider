@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 var ErrKwebUnreachable = errors.New("kweb is unreachable")
@@ -56,6 +58,7 @@ type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	timeout    time.Duration
+	limiter    *rate.Limiter
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -65,6 +68,7 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 			Timeout: timeout,
 		},
 		timeout: timeout,
+		limiter: rate.NewLimiter(rate.Limit(10), 20),
 	}
 }
 
@@ -216,6 +220,10 @@ func (c *Client) CheckHealth(ctx context.Context) (bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
+	if err := c.limiter.Wait(ctx); err != nil {
+		return false, fmt.Errorf("rate limiter: %w", err)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/host", nil)
 	if err != nil {
 		return false, err
@@ -249,6 +257,10 @@ func (c *Client) doPost(ctx context.Context, path string, body interface{}) erro
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	if err := c.limiter.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limiter: %w", err)
+	}
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return ErrKwebUnreachable
@@ -265,6 +277,10 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -291,6 +307,10 @@ func (c *Client) doDelete(ctx context.Context, path string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+path, nil)
 	if err != nil {
 		return err
+	}
+
+	if err := c.limiter.Wait(ctx); err != nil {
+		return fmt.Errorf("rate limiter: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)

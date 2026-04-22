@@ -11,10 +11,13 @@ import (
 	"net/http/httptest"
 	"time"
 
+	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/go-chi/chi/v5"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
 
+	apiv1alpha1 "github.com/pgarciaq/dcm-kcli-provider/api/v1alpha1"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/api/server"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/handlers"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/kweb"
@@ -23,6 +26,21 @@ import (
 
 func buildRouter(impl *server.StrictServerImpl) *chi.Mux {
 	r := chi.NewRouter()
+	strictHandler := server.NewStrictHandler(impl, nil)
+	server.HandlerFromMuxWithBaseURL(strictHandler, r, "/api/v1alpha1")
+	return r
+}
+
+func buildRouterWithValidation(impl *server.StrictServerImpl) *chi.Mux {
+	swagger, err := apiv1alpha1.GetSwagger()
+	Expect(err).NotTo(HaveOccurred())
+	r := chi.NewRouter()
+	r.Use(nethttpmiddleware.OapiRequestValidatorWithOptions(swagger, &nethttpmiddleware.Options{
+		Options: openapi3filter.Options{
+			AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
+		},
+		SilenceServersWarning: true,
+	}))
 	strictHandler := server.NewStrictHandler(impl, nil)
 	server.HandlerFromMuxWithBaseURL(strictHandler, r, "/api/v1alpha1")
 	return r
@@ -203,6 +221,17 @@ var _ = Describe("Handlers", func() {
 		Expect(resp["next_page_token"]).NotTo(BeEmpty())
 	})
 
+	It("returns 502 when kweb is unreachable during VM list", func() {
+		storeMock.Put(store.ResourceEntry{ID: "vm-1", KcliName: "dcm-vm1", Type: "vm", Status: "RUNNING"})
+		kwebMock.listVMsErr = kweb.ErrKwebUnreachable
+
+		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(502))
+	})
+
 	It("returns VM with user-facing name (not prefixed)", func() {
 		storeMock.Put(store.ResourceEntry{ID: "vm-get", KcliName: "dcm-pretty", Type: "vm", Status: "RUNNING"})
 
@@ -295,6 +324,20 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(400))
 	})
 
+	It("C-70: rejects cluster type 'kind' with 400", func() {
+		body := `{"cluster_type": "kind", "metadata": {"name": "x"}, "service_type": "cluster"}`
+		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(400))
+		var pd map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &pd)
+		Expect(pd["detail"].(string)).To(ContainSubstring("kind"))
+		Expect(pd["detail"].(string)).To(ContainSubstring("not supported"))
+	})
+
 	It("returns only DCM-managed clusters, not external kweb clusters", func() {
 		storeMock.Put(store.ResourceEntry{ID: "cl-1", KcliName: "dcm-cl1", Type: "cluster", Status: "ACTIVE"})
 		kwebMock.listClustersResult = []kweb.ClusterInfo{
@@ -312,6 +355,23 @@ var _ = Describe("Handlers", func() {
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		results := resp["results"].([]interface{})
 		Expect(results).To(HaveLen(1))
+	})
+
+	It("paginates cluster list with max_page_size and next_page_token", func() {
+		storeMock.Put(store.ResourceEntry{ID: "cl-1", KcliName: "dcm-cl1", Type: "cluster", Status: "ACTIVE"})
+		storeMock.Put(store.ResourceEntry{ID: "cl-2", KcliName: "dcm-cl2", Type: "cluster", Status: "ACTIVE"})
+		storeMock.Put(store.ResourceEntry{ID: "cl-3", KcliName: "dcm-cl3", Type: "cluster", Status: "ACTIVE"})
+
+		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters?max_page_size=1", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		results := resp["results"].([]interface{})
+		Expect(results).To(HaveLen(1))
+		Expect(resp["next_page_token"]).NotTo(BeEmpty())
 	})
 
 	It("returns cluster with user-facing name", func() {
@@ -358,6 +418,33 @@ var _ = Describe("Handlers", func() {
 	})
 
 	// ====== HTTP hardening ======
+
+	It("C-58: returns 400 when required fields are missing from VM create", func() {
+		validationRouter := buildRouterWithValidation(impl)
+		body := `{"service_type": "vm"}`
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		validationRouter.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(400))
+	})
+
+	It("TC-HDL-POST-UT-018: returns 400 for empty body on POST /api/v1alpha1/vms", func() {
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(""))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(400))
+	})
+
+	It("TC-HDL-POST-UT-019: returns 400 for empty body on POST /api/v1alpha1/clusters", func() {
+		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(""))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(400))
+	})
 
 	It("TC-HTTP-UT-003: returns RFC 7807 500 when handler panics", func() {
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -488,7 +575,7 @@ var _ = Describe("Handlers", func() {
 		Expect(resp["next_page_token"]).NotTo(BeEmpty())
 	})
 
-	It("TC-HDL-LST-UT-004: invalid page_token is treated as start", func() {
+	It("TC-HDL-LST-UT-004: invalid page_token returns 400", func() {
 		storeMock.Put(store.ResourceEntry{ID: "t1", KcliName: "dcm-t1", Type: "vm", Status: "RUNNING"})
 		storeMock.Put(store.ResourceEntry{ID: "t2", KcliName: "dcm-t2", Type: "vm", Status: "RUNNING"})
 		storeMock.Put(store.ResourceEntry{ID: "t3", KcliName: "dcm-t3", Type: "vm", Status: "RUNNING"})
@@ -497,11 +584,10 @@ var _ = Describe("Handlers", func() {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		Expect(w.Code).To(Equal(200))
-		var resp map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		results := resp["results"].([]interface{})
-		Expect(results).To(HaveLen(3))
+		Expect(w.Code).To(Equal(400))
+		var pd map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &pd)
+		Expect(pd["detail"].(string)).To(ContainSubstring("invalid page_token"))
 	})
 
 	It("TC-HDL-LST-UT-005: empty VM list returns empty results array", func() {

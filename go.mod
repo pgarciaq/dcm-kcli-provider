@@ -15,6 +15,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
 	go.etcd.io/bbolt v1.4.3
+	golang.org/x/time v0.15.0
 )
 
 require (

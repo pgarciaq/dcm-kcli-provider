@@ -15,6 +15,7 @@ type mockKweb struct {
 	mu                  sync.Mutex
 	createVMErr         error
 	createClusterErr    error
+	listVMsErr          error
 	listVMsResult       []kweb.VMInfo
 	getVMResult         *kweb.VMInfo
 	deleteVMErr         error
@@ -37,6 +38,9 @@ func (m *mockKweb) CreateVM(_ context.Context, name, profile string, params map[
 func (m *mockKweb) ListVMs(_ context.Context) ([]kweb.VMInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.listVMsErr != nil {
+		return nil, m.listVMsErr
+	}
 	return m.listVMsResult, nil
 }
 

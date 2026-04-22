@@ -38,7 +38,7 @@ type Server struct {
 	publisher  events.Publisher
 	kwebClient *kweb.Client
 	monitor    *monitor.Monitor
-	registrar  *registration.Registrar
+	registrars []*registration.Registrar
 	listener   net.Listener
 }
 
@@ -82,11 +82,28 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	if vmProviderCfg.ID == "" {
 		vmProviderCfg.ID = uuid.New().String()
 	}
-	s.registrar, err = registration.NewRegistrar(cfg.SPMURL, vmProviderCfg, logger)
+	vmRegistrar, err := registration.NewRegistrar(cfg.SPMURL, vmProviderCfg, logger)
 	if err != nil {
 		s.store.Close()
-		return nil, fmt.Errorf("creating registrar: %w", err)
+		return nil, fmt.Errorf("creating vm registrar: %w", err)
 	}
+
+	clusterProviderCfg := registration.ProviderConfig{
+		ID:            cfg.ProviderIDCluster,
+		Name:          cfg.ProviderNameCluster,
+		Endpoint:      fmt.Sprintf("http://%s/api/v1alpha1", cfg.ListenAddress),
+		ServiceType:   "cluster",
+		SchemaVersion: cfg.SchemaVersion,
+	}
+	if clusterProviderCfg.ID == "" {
+		clusterProviderCfg.ID = uuid.New().String()
+	}
+	clusterRegistrar, err := registration.NewRegistrar(cfg.SPMURL, clusterProviderCfg, logger)
+	if err != nil {
+		s.store.Close()
+		return nil, fmt.Errorf("creating cluster registrar: %w", err)
+	}
+	s.registrars = []*registration.Registrar{vmRegistrar, clusterRegistrar}
 
 	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version)
 	strictHandler := apiserver.NewStrictHandler(impl, nil)
@@ -158,7 +175,9 @@ func (s *Server) Start(ctx context.Context) error {
 		s.monitor.Run(monCtx)
 	}()
 
-	s.registrar.StartBackground(ctx)
+	for _, reg := range s.registrars {
+		reg.StartBackground(ctx)
+	}
 
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
@@ -179,11 +198,6 @@ func (s *Server) shutdown(monCancel context.CancelFunc, wg *sync.WaitGroup) {
 
 	monCancel()
 
-	s.publisher.Close()
-	if err := s.store.Close(); err != nil {
-		s.logger.Warn("store close error", "error", err)
-	}
-
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -192,10 +206,16 @@ func (s *Server) shutdown(monCancel context.CancelFunc, wg *sync.WaitGroup) {
 
 	select {
 	case <-done:
-		s.logger.Info("graceful shutdown complete")
 	case <-shutCtx.Done():
 		s.logger.Warn("shutdown timeout exceeded, some goroutines may still be running")
 	}
+
+	s.publisher.Close()
+	if err := s.store.Close(); err != nil {
+		s.logger.Warn("store close error", "error", err)
+	}
+
+	s.logger.Info("graceful shutdown complete")
 }
 
 func (s *Server) selfProbe(ctx context.Context) bool {

@@ -215,6 +215,23 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 }
 
 func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject) (ListVMsResponseObject, error) {
+	maxPageSize := 50
+	if req.Params.MaxPageSize != nil && *req.Params.MaxPageSize > 0 {
+		maxPageSize = *req.Params.MaxPageSize
+	}
+
+	startIdx := 0
+	if req.Params.PageToken != nil && *req.Params.PageToken != "" {
+		v, err := strconv.Atoi(*req.Params.PageToken)
+		if err != nil || v < 0 {
+			return ListVMsdefaultApplicationProblemPlusJSONResponse{
+				Body:       problemError(400, fmt.Sprintf("invalid page_token: %q", *req.Params.PageToken)),
+				StatusCode: 400,
+			}, nil
+		}
+		startIdx = v
+	}
+
 	storeVMs, err := s.store.List("vm")
 	if err != nil {
 		return ListVMsdefaultApplicationProblemPlusJSONResponse{
@@ -223,19 +240,15 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 		}, nil
 	}
 
-	maxPageSize := 50
-	if req.Params.MaxPageSize != nil && *req.Params.MaxPageSize > 0 {
-		maxPageSize = *req.Params.MaxPageSize
-	}
-
-	startIdx := 0
-	if req.Params.PageToken != nil && *req.Params.PageToken != "" {
-		if v, err := strconv.Atoi(*req.Params.PageToken); err == nil {
-			startIdx = v
+	kwebVMs, kwebErr := s.kweb.ListVMs(ctx)
+	if kwebErr != nil {
+		if errors.Is(kwebErr, kweb.ErrKwebUnreachable) {
+			return ListVMsdefaultApplicationProblemPlusJSONResponse{
+				Body:       problemError(502, "kweb is unreachable"),
+				StatusCode: 502,
+			}, nil
 		}
 	}
-
-	kwebVMs, _ := s.kweb.ListVMs(ctx)
 	kwebMap := make(map[string]kweb.VMInfo)
 	for _, vm := range kwebVMs {
 		kwebMap[vm.Name] = vm
@@ -418,7 +431,24 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 	}, nil
 }
 
-func (s *StrictServerImpl) ListClusters(ctx context.Context, _ ListClustersRequestObject) (ListClustersResponseObject, error) {
+func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersRequestObject) (ListClustersResponseObject, error) {
+	maxPageSize := 50
+	if req.Params.MaxPageSize != nil && *req.Params.MaxPageSize > 0 {
+		maxPageSize = *req.Params.MaxPageSize
+	}
+
+	startIdx := 0
+	if req.Params.PageToken != nil && *req.Params.PageToken != "" {
+		v, err := strconv.Atoi(*req.Params.PageToken)
+		if err != nil || v < 0 {
+			return ListClustersdefaultApplicationProblemPlusJSONResponse{
+				Body:       problemError(400, fmt.Sprintf("invalid page_token: %q", *req.Params.PageToken)),
+				StatusCode: 400,
+			}, nil
+		}
+		startIdx = v
+	}
+
 	storeClusters, err := s.store.List("cluster")
 	if err != nil {
 		return ListClustersdefaultApplicationProblemPlusJSONResponse{
@@ -438,8 +468,21 @@ func (s *StrictServerImpl) ListClusters(ctx context.Context, _ ListClustersReque
 		})
 	}
 
+	if startIdx > len(results) {
+		startIdx = len(results)
+	}
+	results = results[startIdx:]
+
+	var nextToken *string
+	if len(results) > maxPageSize {
+		t := strconv.Itoa(startIdx + maxPageSize)
+		nextToken = &t
+		results = results[:maxPageSize]
+	}
+
 	return ListClusters200JSONResponse{
-		Results: &results,
+		Results:       &results,
+		NextPageToken: nextToken,
 	}, nil
 }
 
@@ -460,11 +503,20 @@ func (s *StrictServerImpl) GetCluster(ctx context.Context, req GetClusterRequest
 
 	name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
 	status := entry.Status
-	return GetCluster200JSONResponse{
+	resp := ClusterResource{
 		Id:     &entry.ID,
 		Name:   &name,
 		Status: &status,
-	}, nil
+	}
+
+	kc, err := s.kweb.GetCluster(ctx, entry.KcliName)
+	if err == nil {
+		if kc.Version != "" {
+			resp.Version = &kc.Version
+		}
+	}
+
+	return GetCluster200JSONResponse(resp), nil
 }
 
 func (s *StrictServerImpl) DeleteCluster(ctx context.Context, req DeleteClusterRequestObject) (DeleteClusterResponseObject, error) {
