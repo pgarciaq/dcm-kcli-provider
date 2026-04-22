@@ -64,11 +64,49 @@ curl -X POST "http://localhost:9080/api/v1alpha1/catalog-item-instances?id=my-vm
   }'
 ```
 
-> **Note:** The full DCM flow (catalog → placement → policy → SPM → SP)
-> requires the SP to implement the SPM generic resource protocol
-> (`POST {endpoint}?id=...`). This is not yet implemented — see the
-> enhancement proposal for details. Direct SP API calls
-> (`POST /api/v1alpha1/vms`) work today.
+> **Note:** The kcli SP now implements the SPM generic resource protocol
+> (`POST {endpoint}?id=...` with `{"spec": <CatalogSpec>}` body). The
+> full DCM flow (catalog → placement → policy → SPM → SP) should work
+> once catalog items and policies are configured. Direct SP API calls
+> also work (e.g. `POST /api/v1alpha1/vms` with `{"spec": {...}}`).
+
+### 4. Direct SP API calls (without the DCM control plane)
+
+You can also call the kcli SP directly, bypassing catalog/placement/policy:
+
+```bash
+# Create a VM
+curl -X POST "http://localhost:8080/api/v1alpha1/vms?id=my-vm-id" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "spec": {
+      "service_type": "vm",
+      "metadata": {"name": "my-fedora"},
+      "guest_os": {"type": "fedora-39"},
+      "memory": {"size": "4GB"},
+      "vcpu": {"count": 2}
+    }
+  }'
+
+# Create a k3s cluster (cluster_type via provider_hints)
+curl -X POST "http://localhost:8080/api/v1alpha1/clusters?id=my-cluster-id" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "spec": {
+      "service_type": "cluster",
+      "metadata": {"name": "my-k3s"},
+      "nodes": {
+        "control_plane": {"count": 1},
+        "workers": {"count": 2}
+      },
+      "provider_hints": {
+        "kcli": {"cluster_type": "k3s"}
+      }
+    }
+  }'
+```
+
+The `?id=` query parameter is optional — if omitted, the SP generates a UUID.
 
 ## Customization
 

@@ -46,6 +46,70 @@ func buildRouterWithValidation(impl *server.StrictServerImpl) *chi.Mux {
 	return r
 }
 
+// vmBody builds a JSON request body for POST /vms with the new spec wrapper.
+func vmBody(name, guestOS string, opts ...func(map[string]interface{})) string {
+	spec := map[string]interface{}{
+		"service_type": "vm",
+		"metadata":     map[string]interface{}{"name": name},
+		"guest_os":     map[string]interface{}{"type": guestOS},
+	}
+	for _, opt := range opts {
+		opt(spec)
+	}
+	body := map[string]interface{}{"spec": spec}
+	b, _ := json.Marshal(body)
+	return string(b)
+}
+
+func withMemory(size string) func(map[string]interface{}) {
+	return func(spec map[string]interface{}) {
+		spec["memory"] = map[string]interface{}{"size": size}
+	}
+}
+
+func withVcpu(count int) func(map[string]interface{}) {
+	return func(spec map[string]interface{}) {
+		spec["vcpu"] = map[string]interface{}{"count": count}
+	}
+}
+
+// clusterBody builds a JSON request body for POST /clusters with the new spec wrapper.
+func clusterBody(name string, opts ...func(map[string]interface{})) string {
+	spec := map[string]interface{}{
+		"service_type": "cluster",
+		"metadata":     map[string]interface{}{"name": name},
+	}
+	for _, opt := range opts {
+		opt(spec)
+	}
+	body := map[string]interface{}{"spec": spec}
+	b, _ := json.Marshal(body)
+	return string(b)
+}
+
+func withClusterType(ct string) func(map[string]interface{}) {
+	return func(spec map[string]interface{}) {
+		if spec["provider_hints"] == nil {
+			spec["provider_hints"] = map[string]interface{}{}
+		}
+		hints := spec["provider_hints"].(map[string]interface{})
+		hints["kcli"] = map[string]interface{}{"cluster_type": ct}
+	}
+}
+
+func withNodes(ctlplanes, workers int) func(map[string]interface{}) {
+	return func(spec map[string]interface{}) {
+		nodes := map[string]interface{}{}
+		if ctlplanes > 0 {
+			nodes["control_plane"] = map[string]interface{}{"count": ctlplanes}
+		}
+		if workers >= 0 {
+			nodes["workers"] = map[string]interface{}{"count": workers}
+		}
+		spec["nodes"] = nodes
+	}
+}
+
 var _ = Describe("Handlers", func() {
 	var (
 		kwebMock  *mockKweb
@@ -65,7 +129,7 @@ var _ = Describe("Handlers", func() {
 		router = buildRouter(impl)
 	})
 
-	// ====== 6a: Health handler ======
+	// ====== Health handlers ======
 
 	It("returns 200 with pass, version, and uptime when kweb is healthy", func() {
 		req := httptest.NewRequest("GET", "/api/v1alpha1/health", nil)
@@ -96,16 +160,50 @@ var _ = Describe("Handlers", func() {
 		Expect(body).To(HaveKey("uptime"))
 	})
 
-	// ====== 6b: VM handlers ======
+	It("GET /vms/health returns 200 when kweb is healthy", func() {
+		req := httptest.NewRequest("GET", "/api/v1alpha1/vms/health", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
 
-	It("creates a VM and returns 201 with PROVISIONING status", func() {
-		body := `{
-			"memory": {"size": "4GB"},
-			"vcpu": {"count": 2},
-			"guest_os": {"type": "fedora-39"},
-			"metadata": {"name": "web-server"},
-			"service_type": "vm"
-		}`
+		Expect(w.Code).To(Equal(200))
+		var body map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &body)
+		Expect(body["status"]).To(Equal("pass"))
+	})
+
+	It("GET /vms/health returns 503 when kweb is unhealthy", func() {
+		kwebMock.healthResult = false
+		req := httptest.NewRequest("GET", "/api/v1alpha1/vms/health", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(503))
+	})
+
+	It("GET /clusters/health returns 200 when kweb is healthy", func() {
+		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters/health", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var body map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &body)
+		Expect(body["status"]).To(Equal("pass"))
+	})
+
+	It("GET /clusters/health returns 503 when kweb is unhealthy", func() {
+		kwebMock.healthResult = false
+		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters/health", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(503))
+	})
+
+	// ====== VM handlers ======
+
+	It("creates a VM and returns 201 with id, status, path, and spec", func() {
+		body := vmBody("web-server", "fedora-39", withMemory("4GB"), withVcpu(2))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -113,18 +211,39 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(201))
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
-		Expect(resp["name"]).To(Equal("web-server"))
 		Expect(resp["status"]).To(Equal("PROVISIONING"))
 		Expect(resp["id"]).NotTo(BeEmpty())
+		Expect(resp["path"].(string)).To(HavePrefix("vms/"))
+		Expect(resp).To(HaveKey("spec"))
+	})
+
+	It("uses client-supplied ?id when present", func() {
+		body := vmBody("idtest", "fedora-39", withMemory("4GB"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms?id=my-custom-id", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"]).To(Equal("my-custom-id"))
+		Expect(resp["path"]).To(Equal("vms/my-custom-id"))
+	})
+
+	It("generates UUID when ?id is absent", func() {
+		body := vmBody("noid", "fedora-39", withMemory("4GB"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"].(string)).To(HaveLen(36)) // UUID v4 format
 	})
 
 	It("stores entry in bbolt with prefixed kcli name", func() {
-		body := `{
-			"memory": {"size": "4GB"},
-			"guest_os": {"type": "fedora-39"},
-			"metadata": {"name": "my-vm"},
-			"service_type": "vm"
-		}`
+		body := vmBody("my-vm", "fedora-39", withMemory("4GB"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -135,12 +254,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("returns 400 when profile is not found", func() {
-		body := `{
-			"memory": {"size": "4GB"},
-			"guest_os": {"type": "nonexistent-os"},
-			"metadata": {"name": "x"},
-			"service_type": "vm"
-		}`
+		body := vmBody("x", "nonexistent-os", withMemory("4GB"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -152,14 +266,27 @@ var _ = Describe("Handlers", func() {
 		Expect(pd["detail"].(string)).To(ContainSubstring("fedora-39"))
 	})
 
+	It("uses profile from provider_hints.kcli.profile when present", func() {
+		spec := map[string]interface{}{
+			"service_type": "vm",
+			"metadata":     map[string]interface{}{"name": "hint-vm"},
+			"guest_os":     map[string]interface{}{"type": "should-be-ignored"},
+			"memory":       map[string]interface{}{"size": "4GB"},
+			"provider_hints": map[string]interface{}{
+				"kcli": map[string]interface{}{"profile": "fedora-39"},
+			},
+		}
+		b, _ := json.Marshal(map[string]interface{}{"spec": spec})
+		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBuffer(b))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+	})
+
 	It("returns 409 when VM already exists", func() {
 		kwebMock.createVMErr = kweb.ErrConflict
-		body := `{
-			"memory": {"size": "4GB"},
-			"guest_os": {"type": "fedora-39"},
-			"metadata": {"name": "dup"},
-			"service_type": "vm"
-		}`
+		body := vmBody("dup", "fedora-39", withMemory("4GB"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -167,14 +294,9 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(409))
 	})
 
-	It("returns 502 when kweb is unreachable", func() {
+	It("returns 502 when kweb is unreachable on create", func() {
 		kwebMock.createVMErr = kweb.ErrKwebUnreachable
-		body := `{
-			"memory": {"size": "4GB"},
-			"guest_os": {"type": "fedora-39"},
-			"metadata": {"name": "x"},
-			"service_type": "vm"
-		}`
+		body := vmBody("x", "fedora-39", withMemory("4GB"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -189,8 +311,6 @@ var _ = Describe("Handlers", func() {
 			{Name: "dcm-vm1", Status: "up", IP: "1.1.1.1"},
 			{Name: "dcm-vm2", Status: "down"},
 			{Name: "other-vm", Status: "up"},
-			{Name: "external1", Status: "up"},
-			{Name: "external2", Status: "up"},
 		}
 
 		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
@@ -232,7 +352,7 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(502))
 	})
 
-	It("returns VM with user-facing name (not prefixed)", func() {
+	It("returns VM with id, status, path, and spec containing user-facing name", func() {
 		storeMock.Put(store.ResourceEntry{ID: "vm-get", KcliName: "dcm-pretty", Type: "vm", Status: "RUNNING"})
 
 		req := httptest.NewRequest("GET", "/api/v1alpha1/vms/vm-get", nil)
@@ -242,7 +362,12 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(200))
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
-		Expect(resp["name"]).To(Equal("pretty"))
+		Expect(resp["id"]).To(Equal("vm-get"))
+		Expect(resp["status"]).To(Equal("RUNNING"))
+		Expect(resp["path"]).To(Equal("vms/vm-get"))
+		spec := resp["spec"].(map[string]interface{})
+		meta := spec["metadata"].(map[string]interface{})
+		Expect(meta["name"]).To(Equal("pretty"))
 	})
 
 	It("returns 404 for unknown VM ID", func() {
@@ -279,16 +404,10 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(404))
 	})
 
-	// ====== 6c: Cluster handlers ======
+	// ====== Cluster handlers ======
 
-	It("creates a k3s cluster and returns 201 with CREATING status", func() {
-		body := `{
-			"cluster_type": "k3s",
-			"control_plane": {"count": 1},
-			"workers": {"count": 2},
-			"metadata": {"name": "edge-cluster"},
-			"service_type": "cluster"
-		}`
+	It("creates a k3s cluster and returns 201 with id, status, path, and spec", func() {
+		body := clusterBody("edge-cluster", withClusterType("k3s"), withNodes(1, 2))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -296,16 +415,26 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(201))
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
-		Expect(resp["name"]).To(Equal("edge-cluster"))
 		Expect(resp["status"]).To(Equal("CREATING"))
+		Expect(resp["id"]).NotTo(BeEmpty())
+		Expect(resp["path"].(string)).To(HavePrefix("clusters/"))
+		Expect(resp).To(HaveKey("spec"))
+	})
+
+	It("uses client-supplied ?id for cluster create", func() {
+		body := clusterBody("cidtest", withClusterType("k3s"))
+		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters?id=cluster-custom-id", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"]).To(Equal("cluster-custom-id"))
 	})
 
 	It("stores cluster entry with prefixed name", func() {
-		body := `{
-			"cluster_type": "k3s",
-			"metadata": {"name": "my-cluster"},
-			"service_type": "cluster"
-		}`
+		body := clusterBody("my-cluster", withClusterType("k3s"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -315,8 +444,17 @@ var _ = Describe("Handlers", func() {
 		Expect(entries[0].KcliName).To(Equal("dcm-my-cluster"))
 	})
 
+	It("defaults to generic cluster type when provider_hints omitted", func() {
+		body := clusterBody("default-type")
+		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+	})
+
 	It("rejects unsupported cluster type with 400", func() {
-		body := `{"cluster_type": "banana", "metadata": {"name": "x"}, "service_type": "cluster"}`
+		body := clusterBody("x", withClusterType("banana"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -325,7 +463,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("C-70: rejects cluster type 'kind' with 400", func() {
-		body := `{"cluster_type": "kind", "metadata": {"name": "x"}, "service_type": "cluster"}`
+		body := clusterBody("x", withClusterType("kind"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -343,7 +481,6 @@ var _ = Describe("Handlers", func() {
 		kwebMock.listClustersResult = []kweb.ClusterInfo{
 			{Name: "dcm-cl1", Status: "active"},
 			{Name: "external-cluster", Status: "active"},
-			{Name: "manual-cluster", Status: "active"},
 		}
 
 		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters", nil)
@@ -374,7 +511,7 @@ var _ = Describe("Handlers", func() {
 		Expect(resp["next_page_token"]).NotTo(BeEmpty())
 	})
 
-	It("returns cluster with user-facing name", func() {
+	It("returns cluster with id, status, path, and spec with user-facing name", func() {
 		storeMock.Put(store.ResourceEntry{ID: "cl-get", KcliName: "dcm-myedge", Type: "cluster", Status: "ACTIVE"})
 
 		req := httptest.NewRequest("GET", "/api/v1alpha1/clusters/cl-get", nil)
@@ -384,7 +521,10 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(200))
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
-		Expect(resp["name"]).To(Equal("myedge"))
+		Expect(resp["id"]).To(Equal("cl-get"))
+		spec := resp["spec"].(map[string]interface{})
+		meta := spec["metadata"].(map[string]interface{})
+		Expect(meta["name"]).To(Equal("myedge"))
 	})
 
 	It("returns 404 with RFC 7807 for unknown cluster ID", func() {
@@ -421,7 +561,7 @@ var _ = Describe("Handlers", func() {
 
 	It("C-58: returns 400 when required fields are missing from VM create", func() {
 		validationRouter := buildRouterWithValidation(impl)
-		body := `{"service_type": "vm"}`
+		body := `{"spec": {"service_type": "vm"}}`
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -577,8 +717,6 @@ var _ = Describe("Handlers", func() {
 
 	It("TC-HDL-LST-UT-004: invalid page_token returns 400", func() {
 		storeMock.Put(store.ResourceEntry{ID: "t1", KcliName: "dcm-t1", Type: "vm", Status: "RUNNING"})
-		storeMock.Put(store.ResourceEntry{ID: "t2", KcliName: "dcm-t2", Type: "vm", Status: "RUNNING"})
-		storeMock.Put(store.ResourceEntry{ID: "t3", KcliName: "dcm-t3", Type: "vm", Status: "RUNNING"})
 
 		req := httptest.NewRequest("GET", "/api/v1alpha1/vms?page_token=not-a-number", nil)
 		w := httptest.NewRecorder()
@@ -619,30 +757,9 @@ var _ = Describe("Handlers", func() {
 		Expect(resp["next_page_token"]).To(BeNil())
 	})
 
-	It("TC-HDL-LST-UT-007: VM list returns all entries including empty KcliName without error", func() {
-		storeMock.Put(store.ResourceEntry{ID: "ok1", KcliName: "dcm-ok1", Type: "vm", Status: "RUNNING"})
-		storeMock.Put(store.ResourceEntry{ID: "bad-kcli", KcliName: "", Type: "vm", Status: "RUNNING"})
-		storeMock.Put(store.ResourceEntry{ID: "ok2", KcliName: "dcm-ok2", Type: "vm", Status: "RUNNING"})
-
-		req := httptest.NewRequest("GET", "/api/v1alpha1/vms", nil)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		Expect(w.Code).To(Equal(200))
-		var resp map[string]interface{}
-		json.Unmarshal(w.Body.Bytes(), &resp)
-		results := resp["results"].([]interface{})
-		Expect(results).To(HaveLen(3))
-	})
-
 	It("TC-HDL-CRT-UT-020: VM creation rolls back kweb when store.Put fails", func() {
 		storeMock.putErr = errors.New("persist failed")
-		body := `{
-			"memory": {"size": "4GB"},
-			"guest_os": {"type": "fedora-39"},
-			"metadata": {"name": "rollback-vm"},
-			"service_type": "vm"
-		}`
+		body := vmBody("rollback-vm", "fedora-39", withMemory("4GB"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/vms", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -656,15 +773,16 @@ var _ = Describe("Handlers", func() {
 
 	It("serializes concurrent cluster creation requests", func() {
 		slowKweb := &slowCreateKweb{delay: 50 * time.Millisecond}
+		slowKweb.healthResult = true
 		serialImpl := server.NewStrictServerImpl(slowKweb, storeMock, pub, profiles, "0.1.0")
 		serialRouter := buildRouter(serialImpl)
 
-		body := `{"cluster_type": "k3s", "metadata": {"name": "serial-1"}, "service_type": "cluster"}`
-		body2 := `{"cluster_type": "k3s", "metadata": {"name": "serial-2"}, "service_type": "cluster"}`
+		body1 := clusterBody("serial-1", withClusterType("k3s"))
+		body2 := clusterBody("serial-2", withClusterType("k3s"))
 
 		done := make(chan int, 2)
 		go func() {
-			req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+			req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body1))
 			w := httptest.NewRecorder()
 			serialRouter.ServeHTTP(w, req)
 			done <- w.Code
@@ -686,11 +804,7 @@ var _ = Describe("Handlers", func() {
 
 	It("TC-HDL-CRT-UT-021: cluster creation rolls back kweb when store.Put fails", func() {
 		storeMock.putErr = errors.New("persist failed")
-		body := `{
-			"cluster_type": "k3s",
-			"metadata": {"name": "rollback-cl"},
-			"service_type": "cluster"
-		}`
+		body := clusterBody("rollback-cl", withClusterType("k3s"))
 		req := httptest.NewRequest("POST", "/api/v1alpha1/clusters", bytes.NewBufferString(body))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)

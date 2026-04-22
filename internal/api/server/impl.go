@@ -106,7 +106,13 @@ func statusText(code int) string {
 
 // --- Health ---
 
-func (s *StrictServerImpl) GetHealth(ctx context.Context, _ GetHealthRequestObject) (GetHealthResponseObject, error) {
+func (s *StrictServerImpl) healthResponse() (HealthStatus, *string, *float32, *string) {
+	uptime := float32(time.Since(s.startedAt).Seconds())
+	ver := s.version
+	return Pass, &ver, &uptime, nil
+}
+
+func (s *StrictServerImpl) doHealthCheck(ctx context.Context) (HealthStatus, *string, *float32, *string) {
 	uptime := float32(time.Since(s.startedAt).Seconds())
 	ver := s.version
 
@@ -116,29 +122,53 @@ func (s *StrictServerImpl) GetHealth(ctx context.Context, _ GetHealthRequestObje
 		if err != nil {
 			msg = err.Error()
 		}
-		status := Fail
+		return Fail, &ver, &uptime, &msg
+	}
+	return Pass, &ver, &uptime, nil
+}
+
+func (s *StrictServerImpl) GetHealth(ctx context.Context, _ GetHealthRequestObject) (GetHealthResponseObject, error) {
+	status, ver, uptime, msg := s.doHealthCheck(ctx)
+	if status == Fail {
 		return GetHealth503JSONResponse{
-			Status:  &status,
-			Version: &ver,
-			Uptime:  &uptime,
-			Message: &msg,
+			Status: &status, Version: ver, Uptime: uptime, Message: msg,
 		}, nil
 	}
-
-	status := Pass
 	return GetHealth200JSONResponse{
-		Status:  &status,
-		Version: &ver,
-		Uptime:  &uptime,
+		Status: &status, Version: ver, Uptime: uptime,
+	}, nil
+}
+
+func (s *StrictServerImpl) GetVMHealth(ctx context.Context, _ GetVMHealthRequestObject) (GetVMHealthResponseObject, error) {
+	status, ver, uptime, msg := s.doHealthCheck(ctx)
+	if status == Fail {
+		return GetVMHealth503JSONResponse{
+			Status: &status, Version: ver, Uptime: uptime, Message: msg,
+		}, nil
+	}
+	return GetVMHealth200JSONResponse{
+		Status: &status, Version: ver, Uptime: uptime,
+	}, nil
+}
+
+func (s *StrictServerImpl) GetClusterHealth(ctx context.Context, _ GetClusterHealthRequestObject) (GetClusterHealthResponseObject, error) {
+	status, ver, uptime, msg := s.doHealthCheck(ctx)
+	if status == Fail {
+		return GetClusterHealth503JSONResponse{
+			Status: &status, Version: ver, Uptime: uptime, Message: msg,
+		}, nil
+	}
+	return GetClusterHealth200JSONResponse{
+		Status: &status, Version: ver, Uptime: uptime,
 	}, nil
 }
 
 // --- VMs ---
 
 func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObject) (CreateVMResponseObject, error) {
-	body := req.Body
+	spec := req.Body.Spec
 
-	profile := body.GuestOs.Type
+	profile := resolveVMProfile(spec)
 	if s.profiles != nil {
 		available := s.profiles.Profiles()
 		found := false
@@ -155,26 +185,28 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 		}
 	}
 
-	kcliName := dcmPrefix + body.Metadata.Name
+	kcliName := dcmPrefix + spec.Metadata.Name
 	params := map[string]interface{}{}
 
-	memMB, err := parseMemorySize(body.Memory.Size)
-	if err == nil && memMB > 0 {
-		params["parameters[memory]"] = memMB
+	if spec.Memory != nil {
+		memMB, err := parseMemorySize(spec.Memory.Size)
+		if err == nil && memMB > 0 {
+			params["parameters[memory]"] = memMB
+		}
 	}
 
-	if body.Vcpu != nil && body.Vcpu.Count != nil {
-		params["parameters[numcpus]"] = *body.Vcpu.Count
+	if spec.Vcpu != nil && spec.Vcpu.Count != nil {
+		params["parameters[numcpus]"] = *spec.Vcpu.Count
 	}
 
-	if body.Access != nil && body.Access.SshPublicKey != nil && *body.Access.SshPublicKey != "" {
-		params["parameters[keys]"] = []string{*body.Access.SshPublicKey}
+	if spec.Access != nil && spec.Access.SshPublicKey != nil && *spec.Access.SshPublicKey != "" {
+		params["parameters[keys]"] = []string{*spec.Access.SshPublicKey}
 	}
 
 	if err := s.kweb.CreateVM(ctx, kcliName, profile, params); err != nil {
 		if errors.Is(err, kweb.ErrConflict) {
 			return CreateVM409ApplicationProblemPlusJSONResponse(
-				problemError(409, fmt.Sprintf("VM '%s' already exists", body.Metadata.Name)),
+				problemError(409, fmt.Sprintf("VM '%s' already exists", spec.Metadata.Name)),
 			), nil
 		}
 		if errors.Is(err, kweb.ErrKwebUnreachable) {
@@ -189,7 +221,7 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 		}, nil
 	}
 
-	id := uuid.New().String()
+	id := resolveID(req.Params.Id)
 	entry := store.ResourceEntry{
 		ID:        id,
 		KcliName:  kcliName,
@@ -205,12 +237,13 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 		}, nil
 	}
 
-	name := body.Metadata.Name
 	status := "PROVISIONING"
+	path := fmt.Sprintf("vms/%s", id)
 	return CreateVM201JSONResponse{
 		Id:     &id,
-		Name:   &name,
 		Status: &status,
+		Path:   &path,
+		Spec:   spec,
 	}, nil
 }
 
@@ -254,19 +287,9 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 		kwebMap[vm.Name] = vm
 	}
 
-	results := make([]VMResource, 0, len(storeVMs))
+	results := make([]VM, 0, len(storeVMs))
 	for _, entry := range storeVMs {
-		name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
-		status := entry.Status
-		res := VMResource{
-			Id:     &entry.ID,
-			Name:   &name,
-			Status: &status,
-		}
-		if kvm, ok := kwebMap[entry.KcliName]; ok && kvm.IP != "" {
-			res.Ip = &kvm.IP
-		}
-		results = append(results, res)
+		results = append(results, entryToVM(entry))
 	}
 
 	if startIdx > len(results) {
@@ -302,17 +325,13 @@ func (s *StrictServerImpl) GetVM(ctx context.Context, req GetVMRequestObject) (G
 		}, nil
 	}
 
-	name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
-	status := entry.Status
-	resp := VMResource{
-		Id:     &entry.ID,
-		Name:   &name,
-		Status: &status,
-	}
+	resp := entryToVM(*entry)
 
 	kvm, err := s.kweb.GetVM(ctx, entry.KcliName)
 	if err == nil && kvm.IP != "" {
-		resp.Ip = &kvm.IP
+		resp.Spec.AdditionalProperties = map[string]interface{}{
+			"ip": kvm.IP,
+		}
 	}
 
 	return GetVM200JSONResponse(resp), nil
@@ -364,8 +383,9 @@ func (s *StrictServerImpl) DeleteVM(ctx context.Context, req DeleteVMRequestObje
 // --- Clusters ---
 
 func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterRequestObject) (CreateClusterResponseObject, error) {
-	body := req.Body
-	ct := string(body.ClusterType)
+	spec := req.Body.Spec
+
+	ct := resolveClusterType(spec)
 
 	if rejectedClusterTypes[ct] {
 		return CreateCluster400ApplicationProblemPlusJSONResponse(
@@ -380,13 +400,15 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 		), nil
 	}
 
-	kcliName := dcmPrefix + body.Metadata.Name
+	kcliName := dcmPrefix + spec.Metadata.Name
 	params := map[string]interface{}{}
-	if body.ControlPlane != nil && body.ControlPlane.Count != nil {
-		params["ctlplanes"] = *body.ControlPlane.Count
-	}
-	if body.Workers != nil && body.Workers.Count != nil {
-		params["workers"] = *body.Workers.Count
+	if spec.Nodes != nil {
+		if spec.Nodes.ControlPlane != nil && spec.Nodes.ControlPlane.Count != nil {
+			params["ctlplanes"] = int(*spec.Nodes.ControlPlane.Count)
+		}
+		if spec.Nodes.Workers != nil && spec.Nodes.Workers.Count != nil {
+			params["workers"] = *spec.Nodes.Workers.Count
+		}
 	}
 
 	s.createMu.Lock()
@@ -406,7 +428,7 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 		}, nil
 	}
 
-	id := uuid.New().String()
+	id := resolveID(req.Params.Id)
 	entry := store.ResourceEntry{
 		ID:        id,
 		KcliName:  kcliName,
@@ -422,12 +444,13 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 		}, nil
 	}
 
-	name := body.Metadata.Name
 	status := "CREATING"
+	path := fmt.Sprintf("clusters/%s", id)
 	return CreateCluster201JSONResponse{
 		Id:     &id,
-		Name:   &name,
 		Status: &status,
+		Path:   &path,
+		Spec:   spec,
 	}, nil
 }
 
@@ -457,15 +480,9 @@ func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersReq
 		}, nil
 	}
 
-	results := make([]ClusterResource, 0, len(storeClusters))
+	results := make([]Cluster, 0, len(storeClusters))
 	for _, entry := range storeClusters {
-		name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
-		status := entry.Status
-		results = append(results, ClusterResource{
-			Id:     &entry.ID,
-			Name:   &name,
-			Status: &status,
-		})
+		results = append(results, entryToCluster(entry))
 	}
 
 	if startIdx > len(results) {
@@ -501,19 +518,11 @@ func (s *StrictServerImpl) GetCluster(ctx context.Context, req GetClusterRequest
 		}, nil
 	}
 
-	name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
-	status := entry.Status
-	resp := ClusterResource{
-		Id:     &entry.ID,
-		Name:   &name,
-		Status: &status,
-	}
+	resp := entryToCluster(*entry)
 
 	kc, err := s.kweb.GetCluster(ctx, entry.KcliName)
-	if err == nil {
-		if kc.Version != "" {
-			resp.Version = &kc.Version
-		}
+	if err == nil && kc.Version != "" {
+		resp.Spec.Version = &kc.Version
 	}
 
 	return GetCluster200JSONResponse(resp), nil
@@ -564,6 +573,45 @@ func (s *StrictServerImpl) DeleteCluster(ctx context.Context, req DeleteClusterR
 
 // --- Helpers ---
 
+func resolveID(clientID *string) string {
+	if clientID != nil && *clientID != "" {
+		return *clientID
+	}
+	return uuid.New().String()
+}
+
+// resolveVMProfile determines the kcli profile from the VM spec.
+// provider_hints.kcli.profile takes precedence over guest_os.type.
+func resolveVMProfile(spec VMSpec) string {
+	if spec.ProviderHints != nil {
+		if kcli, ok := (*spec.ProviderHints)["kcli"]; ok {
+			if m, ok := kcli.(map[string]interface{}); ok {
+				if p, ok := m["profile"].(string); ok && p != "" {
+					return p
+				}
+			}
+		}
+	}
+	return spec.GuestOs.Type
+}
+
+// resolveClusterType determines the kcli cluster type from the cluster spec.
+// provider_hints.kcli.cluster_type is the primary source since the catalog
+// ClusterSpec does not have a cluster_type field.
+// Falls back to "generic" if not specified.
+func resolveClusterType(spec ClusterSpec) string {
+	if spec.ProviderHints != nil {
+		if kcli, ok := (*spec.ProviderHints)["kcli"]; ok {
+			if m, ok := kcli.(map[string]interface{}); ok {
+				if ct, ok := m["cluster_type"].(string); ok && ct != "" {
+					return ct
+				}
+			}
+		}
+	}
+	return "generic"
+}
+
 func parseMemorySize(size string) (int, error) {
 	size = strings.TrimSpace(size)
 	if strings.HasSuffix(size, "TB") {
@@ -587,4 +635,39 @@ func joinSupportedTypes() string {
 		types = append(types, k)
 	}
 	return strings.Join(types, ", ")
+}
+
+// entryToVM constructs a VM response from a store entry.
+func entryToVM(entry store.ResourceEntry) VM {
+	name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
+	status := entry.Status
+	path := fmt.Sprintf("vms/%s", entry.ID)
+	st := Vm
+	return VM{
+		Id:     &entry.ID,
+		Status: &status,
+		Path:   &path,
+		Spec: VMSpec{
+			ServiceType: st,
+			Metadata:    ServiceMetadata{Name: name},
+			GuestOs:     GuestOS{Type: ""},
+		},
+	}
+}
+
+// entryToCluster constructs a Cluster response from a store entry.
+func entryToCluster(entry store.ResourceEntry) Cluster {
+	name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
+	status := entry.Status
+	path := fmt.Sprintf("clusters/%s", entry.ID)
+	st := ClusterSpecServiceTypeCluster
+	return Cluster{
+		Id:     &entry.ID,
+		Status: &status,
+		Path:   &path,
+		Spec: ClusterSpec{
+			ServiceType: st,
+			Metadata:    ServiceMetadata{Name: name},
+		},
+	}
 }

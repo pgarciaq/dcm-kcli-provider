@@ -16,42 +16,36 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
-// Defines values for ClusterCreateRequestClusterType.
+// Defines values for ClusterSpecServiceType.
 const (
-	Generic    ClusterCreateRequestClusterType = "generic"
-	Hypershift ClusterCreateRequestClusterType = "hypershift"
-	K3s        ClusterCreateRequestClusterType = "k3s"
-	Microshift ClusterCreateRequestClusterType = "microshift"
-	Openshift  ClusterCreateRequestClusterType = "openshift"
+	ClusterSpecServiceTypeCluster ClusterSpecServiceType = "cluster"
 )
 
-// Valid indicates whether the value is a known member of the ClusterCreateRequestClusterType enum.
-func (e ClusterCreateRequestClusterType) Valid() bool {
+// Valid indicates whether the value is a known member of the ClusterSpecServiceType enum.
+func (e ClusterSpecServiceType) Valid() bool {
 	switch e {
-	case Generic:
-		return true
-	case Hypershift:
-		return true
-	case K3s:
-		return true
-	case Microshift:
-		return true
-	case Openshift:
+	case ClusterSpecServiceTypeCluster:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ClusterCreateRequestServiceType.
+// Defines values for ControlPlaneNodesCount.
 const (
-	Cluster ClusterCreateRequestServiceType = "cluster"
+	N1 ControlPlaneNodesCount = 1
+	N3 ControlPlaneNodesCount = 3
+	N5 ControlPlaneNodesCount = 5
 )
 
-// Valid indicates whether the value is a known member of the ClusterCreateRequestServiceType enum.
-func (e ClusterCreateRequestServiceType) Valid() bool {
+// Valid indicates whether the value is a known member of the ControlPlaneNodesCount enum.
+func (e ControlPlaneNodesCount) Valid() bool {
 	switch e {
-	case Cluster:
+	case N1:
+		return true
+	case N3:
+		return true
+	case N5:
 		return true
 	default:
 		return false
@@ -76,13 +70,13 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
-// Defines values for VMCreateRequestServiceType.
+// Defines values for VMSpecServiceType.
 const (
-	Vm VMCreateRequestServiceType = "vm"
+	Vm VMSpecServiceType = "vm"
 )
 
-// Valid indicates whether the value is a known member of the VMCreateRequestServiceType enum.
-func (e VMCreateRequestServiceType) Valid() bool {
+// Valid indicates whether the value is a known member of the VMSpecServiceType enum.
+func (e VMSpecServiceType) Valid() bool {
 	switch e {
 	case Vm:
 		return true
@@ -96,37 +90,54 @@ type Access struct {
 	SshPublicKey *string `json:"ssh_public_key,omitempty"`
 }
 
-// ClusterCreateRequest defines model for ClusterCreateRequest.
-type ClusterCreateRequest struct {
-	ClusterType  ClusterCreateRequestClusterType `json:"cluster_type"`
-	ControlPlane *struct {
-		Count *int `json:"count,omitempty"`
-	} `json:"control_plane,omitempty"`
-	Metadata    ServiceMetadata                 `json:"metadata"`
-	ServiceType ClusterCreateRequestServiceType `json:"service_type"`
-	Workers     *struct {
-		Count *int `json:"count,omitempty"`
-	} `json:"workers,omitempty"`
+// Cluster Kubernetes cluster resource
+type Cluster struct {
+	Id *string `json:"id,omitempty"`
+
+	// Path Resource path (e.g. clusters/{id})
+	Path *string `json:"path,omitempty"`
+
+	// Spec Provider-agnostic cluster specification aligned with the DCM catalog ClusterSpec
+	Spec   ClusterSpec `json:"spec"`
+	Status *string     `json:"status,omitempty"`
 }
-
-// ClusterCreateRequestClusterType defines model for ClusterCreateRequest.ClusterType.
-type ClusterCreateRequestClusterType string
-
-// ClusterCreateRequestServiceType defines model for ClusterCreateRequest.ServiceType.
-type ClusterCreateRequestServiceType string
 
 // ClusterList defines model for ClusterList.
 type ClusterList struct {
-	NextPageToken *string            `json:"next_page_token,omitempty"`
-	Results       *[]ClusterResource `json:"results,omitempty"`
+	NextPageToken *string    `json:"next_page_token,omitempty"`
+	Results       *[]Cluster `json:"results,omitempty"`
 }
 
-// ClusterResource defines model for ClusterResource.
-type ClusterResource struct {
-	Id      *string `json:"id,omitempty"`
-	Name    *string `json:"name,omitempty"`
-	Status  *string `json:"status,omitempty"`
-	Version *string `json:"version,omitempty"`
+// ClusterSpec Provider-agnostic cluster specification aligned with the DCM catalog ClusterSpec
+type ClusterSpec struct {
+	Metadata ServiceMetadata `json:"metadata"`
+	Nodes    *Nodes          `json:"nodes,omitempty"`
+
+	// ProviderHints Provider-specific configuration (e.g. kcli profile overrides)
+	ProviderHints *ProviderHints         `json:"provider_hints,omitempty"`
+	ServiceType   ClusterSpecServiceType `json:"service_type"`
+
+	// Version Kubernetes version (e.g. 1.30)
+	Version              *string                `json:"version,omitempty"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// ClusterSpecServiceType defines model for ClusterSpec.ServiceType.
+type ClusterSpecServiceType string
+
+// ControlPlaneNodes defines model for ControlPlaneNodes.
+type ControlPlaneNodes struct {
+	Count *ControlPlaneNodesCount `json:"count,omitempty"`
+}
+
+// ControlPlaneNodesCount defines model for ControlPlaneNodes.Count.
+type ControlPlaneNodesCount int
+
+// Disk defines model for Disk.
+type Disk struct {
+	// Capacity Disk capacity with unit suffix (MB, GB, TB)
+	Capacity string `json:"capacity"`
+	Name     string `json:"name"`
 }
 
 // Error RFC 7807 compliant error response
@@ -140,7 +151,7 @@ type Error struct {
 
 // GuestOS defines model for GuestOS.
 type GuestOS struct {
-	// Type kcli profile name
+	// Type OS identifier mapped to a kcli profile (e.g. fedora-39, rhel-9)
 	Type string `json:"type"`
 }
 
@@ -161,40 +172,69 @@ type Memory struct {
 	Size string `json:"size"`
 }
 
+// Nodes defines model for Nodes.
+type Nodes struct {
+	ControlPlane *ControlPlaneNodes `json:"control_plane,omitempty"`
+	Workers      *WorkerNodes       `json:"workers,omitempty"`
+}
+
+// ProviderHints Provider-specific configuration (e.g. kcli profile overrides)
+type ProviderHints map[string]interface{}
+
 // ServiceMetadata defines model for ServiceMetadata.
 type ServiceMetadata struct {
-	Name string `json:"name"`
+	Labels *map[string]string `json:"labels,omitempty"`
+	Name   string             `json:"name"`
 }
 
-// VMCreateRequest defines model for VMCreateRequest.
-type VMCreateRequest struct {
-	Access      *Access                    `json:"access,omitempty"`
-	GuestOs     GuestOS                    `json:"guest_os"`
-	Memory      Memory                     `json:"memory"`
-	Metadata    ServiceMetadata            `json:"metadata"`
-	ServiceType VMCreateRequestServiceType `json:"service_type"`
-	Vcpu        *Vcpu                      `json:"vcpu,omitempty"`
+// Storage defines model for Storage.
+type Storage struct {
+	Disks *[]Disk `json:"disks,omitempty"`
 }
 
-// VMCreateRequestServiceType defines model for VMCreateRequest.ServiceType.
-type VMCreateRequestServiceType string
+// VM Virtual Machine resource
+type VM struct {
+	Id *string `json:"id,omitempty"`
 
-// VMList defines model for VMList.
-type VMList struct {
-	NextPageToken *string       `json:"next_page_token,omitempty"`
-	Results       *[]VMResource `json:"results,omitempty"`
-}
+	// Path Resource path (e.g. vms/{id})
+	Path *string `json:"path,omitempty"`
 
-// VMResource defines model for VMResource.
-type VMResource struct {
-	Id     *string `json:"id,omitempty"`
-	Ip     *string `json:"ip,omitempty"`
-	Name   *string `json:"name,omitempty"`
+	// Spec Provider-agnostic VM specification aligned with the DCM catalog VMSpec
+	Spec   VMSpec  `json:"spec"`
 	Status *string `json:"status,omitempty"`
 }
 
+// VMList defines model for VMList.
+type VMList struct {
+	NextPageToken *string `json:"next_page_token,omitempty"`
+	Results       *[]VM   `json:"results,omitempty"`
+}
+
+// VMSpec Provider-agnostic VM specification aligned with the DCM catalog VMSpec
+type VMSpec struct {
+	Access   *Access         `json:"access,omitempty"`
+	GuestOs  GuestOS         `json:"guest_os"`
+	Memory   *Memory         `json:"memory,omitempty"`
+	Metadata ServiceMetadata `json:"metadata"`
+
+	// ProviderHints Provider-specific configuration (e.g. kcli profile overrides)
+	ProviderHints        *ProviderHints         `json:"provider_hints,omitempty"`
+	ServiceType          VMSpecServiceType      `json:"service_type"`
+	Storage              *Storage               `json:"storage,omitempty"`
+	Vcpu                 *Vcpu                  `json:"vcpu,omitempty"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// VMSpecServiceType defines model for VMSpec.ServiceType.
+type VMSpecServiceType string
+
 // Vcpu defines model for Vcpu.
 type Vcpu struct {
+	Count *int `json:"count,omitempty"`
+}
+
+// WorkerNodes defines model for WorkerNodes.
+type WorkerNodes struct {
 	Count *int `json:"count,omitempty"`
 }
 
@@ -204,17 +244,320 @@ type ListClustersParams struct {
 	PageToken   *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// CreateClusterParams defines parameters for CreateCluster.
+type CreateClusterParams struct {
+	// Id Client-specified instance ID for idempotent creation (provided by SPM)
+	Id *string `form:"id,omitempty" json:"id,omitempty"`
+}
+
 // ListVMsParams defines parameters for ListVMs.
 type ListVMsParams struct {
 	MaxPageSize *int    `form:"max_page_size,omitempty" json:"max_page_size,omitempty"`
 	PageToken   *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// CreateVMParams defines parameters for CreateVM.
+type CreateVMParams struct {
+	// Id Client-specified instance ID for idempotent creation (provided by SPM)
+	Id *string `form:"id,omitempty" json:"id,omitempty"`
+}
+
 // CreateClusterJSONRequestBody defines body for CreateCluster for application/json ContentType.
-type CreateClusterJSONRequestBody = ClusterCreateRequest
+type CreateClusterJSONRequestBody = Cluster
 
 // CreateVMJSONRequestBody defines body for CreateVM for application/json ContentType.
-type CreateVMJSONRequestBody = VMCreateRequest
+type CreateVMJSONRequestBody = VM
+
+// Getter for additional properties for ClusterSpec. Returns the specified
+// element and whether it was found
+func (a ClusterSpec) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for ClusterSpec
+func (a *ClusterSpec) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for ClusterSpec to handle AdditionalProperties
+func (a *ClusterSpec) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["metadata"]; found {
+		err = json.Unmarshal(raw, &a.Metadata)
+		if err != nil {
+			return fmt.Errorf("error reading 'metadata': %w", err)
+		}
+		delete(object, "metadata")
+	}
+
+	if raw, found := object["nodes"]; found {
+		err = json.Unmarshal(raw, &a.Nodes)
+		if err != nil {
+			return fmt.Errorf("error reading 'nodes': %w", err)
+		}
+		delete(object, "nodes")
+	}
+
+	if raw, found := object["provider_hints"]; found {
+		err = json.Unmarshal(raw, &a.ProviderHints)
+		if err != nil {
+			return fmt.Errorf("error reading 'provider_hints': %w", err)
+		}
+		delete(object, "provider_hints")
+	}
+
+	if raw, found := object["service_type"]; found {
+		err = json.Unmarshal(raw, &a.ServiceType)
+		if err != nil {
+			return fmt.Errorf("error reading 'service_type': %w", err)
+		}
+		delete(object, "service_type")
+	}
+
+	if raw, found := object["version"]; found {
+		err = json.Unmarshal(raw, &a.Version)
+		if err != nil {
+			return fmt.Errorf("error reading 'version': %w", err)
+		}
+		delete(object, "version")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for ClusterSpec to handle AdditionalProperties
+func (a ClusterSpec) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["metadata"], err = json.Marshal(a.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+	}
+
+	if a.Nodes != nil {
+		object["nodes"], err = json.Marshal(a.Nodes)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'nodes': %w", err)
+		}
+	}
+
+	if a.ProviderHints != nil {
+		object["provider_hints"], err = json.Marshal(a.ProviderHints)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'provider_hints': %w", err)
+		}
+	}
+
+	object["service_type"], err = json.Marshal(a.ServiceType)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'service_type': %w", err)
+	}
+
+	if a.Version != nil {
+		object["version"], err = json.Marshal(a.Version)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'version': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for VMSpec. Returns the specified
+// element and whether it was found
+func (a VMSpec) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for VMSpec
+func (a *VMSpec) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for VMSpec to handle AdditionalProperties
+func (a *VMSpec) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["access"]; found {
+		err = json.Unmarshal(raw, &a.Access)
+		if err != nil {
+			return fmt.Errorf("error reading 'access': %w", err)
+		}
+		delete(object, "access")
+	}
+
+	if raw, found := object["guest_os"]; found {
+		err = json.Unmarshal(raw, &a.GuestOs)
+		if err != nil {
+			return fmt.Errorf("error reading 'guest_os': %w", err)
+		}
+		delete(object, "guest_os")
+	}
+
+	if raw, found := object["memory"]; found {
+		err = json.Unmarshal(raw, &a.Memory)
+		if err != nil {
+			return fmt.Errorf("error reading 'memory': %w", err)
+		}
+		delete(object, "memory")
+	}
+
+	if raw, found := object["metadata"]; found {
+		err = json.Unmarshal(raw, &a.Metadata)
+		if err != nil {
+			return fmt.Errorf("error reading 'metadata': %w", err)
+		}
+		delete(object, "metadata")
+	}
+
+	if raw, found := object["provider_hints"]; found {
+		err = json.Unmarshal(raw, &a.ProviderHints)
+		if err != nil {
+			return fmt.Errorf("error reading 'provider_hints': %w", err)
+		}
+		delete(object, "provider_hints")
+	}
+
+	if raw, found := object["service_type"]; found {
+		err = json.Unmarshal(raw, &a.ServiceType)
+		if err != nil {
+			return fmt.Errorf("error reading 'service_type': %w", err)
+		}
+		delete(object, "service_type")
+	}
+
+	if raw, found := object["storage"]; found {
+		err = json.Unmarshal(raw, &a.Storage)
+		if err != nil {
+			return fmt.Errorf("error reading 'storage': %w", err)
+		}
+		delete(object, "storage")
+	}
+
+	if raw, found := object["vcpu"]; found {
+		err = json.Unmarshal(raw, &a.Vcpu)
+		if err != nil {
+			return fmt.Errorf("error reading 'vcpu': %w", err)
+		}
+		delete(object, "vcpu")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for VMSpec to handle AdditionalProperties
+func (a VMSpec) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Access != nil {
+		object["access"], err = json.Marshal(a.Access)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'access': %w", err)
+		}
+	}
+
+	object["guest_os"], err = json.Marshal(a.GuestOs)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'guest_os': %w", err)
+	}
+
+	if a.Memory != nil {
+		object["memory"], err = json.Marshal(a.Memory)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'memory': %w", err)
+		}
+	}
+
+	object["metadata"], err = json.Marshal(a.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+	}
+
+	if a.ProviderHints != nil {
+		object["provider_hints"], err = json.Marshal(a.ProviderHints)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'provider_hints': %w", err)
+		}
+	}
+
+	object["service_type"], err = json.Marshal(a.ServiceType)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'service_type': %w", err)
+	}
+
+	if a.Storage != nil {
+		object["storage"], err = json.Marshal(a.Storage)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'storage': %w", err)
+		}
+	}
+
+	if a.Vcpu != nil {
+		object["vcpu"], err = json.Marshal(a.Vcpu)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'vcpu': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -293,9 +636,12 @@ type ClientInterface interface {
 	ListClusters(ctx context.Context, params *ListClustersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateClusterWithBody request with any body
-	CreateClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateClusterWithBody(ctx context.Context, params *CreateClusterParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateCluster(ctx context.Context, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateCluster(ctx context.Context, params *CreateClusterParams, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetClusterHealth request
+	GetClusterHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteCluster request
 	DeleteCluster(ctx context.Context, clusterId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -310,9 +656,12 @@ type ClientInterface interface {
 	ListVMs(ctx context.Context, params *ListVMsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateVMWithBody request with any body
-	CreateVMWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateVMWithBody(ctx context.Context, params *CreateVMParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	CreateVM(ctx context.Context, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+	CreateVM(ctx context.Context, params *CreateVMParams, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetVMHealth request
+	GetVMHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteVM request
 	DeleteVM(ctx context.Context, vmId string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -333,8 +682,8 @@ func (c *Client) ListClusters(ctx context.Context, params *ListClustersParams, r
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateClusterWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateClusterRequestWithBody(c.Server, contentType, body)
+func (c *Client) CreateClusterWithBody(ctx context.Context, params *CreateClusterParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateClusterRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -345,8 +694,20 @@ func (c *Client) CreateClusterWithBody(ctx context.Context, contentType string, 
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateCluster(ctx context.Context, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateClusterRequest(c.Server, body)
+func (c *Client) CreateCluster(ctx context.Context, params *CreateClusterParams, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateClusterRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetClusterHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetClusterHealthRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -405,8 +766,8 @@ func (c *Client) ListVMs(ctx context.Context, params *ListVMsParams, reqEditors 
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateVMWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVMRequestWithBody(c.Server, contentType, body)
+func (c *Client) CreateVMWithBody(ctx context.Context, params *CreateVMParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVMRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -417,8 +778,20 @@ func (c *Client) CreateVMWithBody(ctx context.Context, contentType string, body 
 	return c.Client.Do(req)
 }
 
-func (c *Client) CreateVM(ctx context.Context, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewCreateVMRequest(c.Server, body)
+func (c *Client) CreateVM(ctx context.Context, params *CreateVMParams, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateVMRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetVMHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetVMHealthRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -519,18 +892,18 @@ func NewListClustersRequest(server string, params *ListClustersParams) (*http.Re
 }
 
 // NewCreateClusterRequest calls the generic CreateCluster builder with application/json body
-func NewCreateClusterRequest(server string, body CreateClusterJSONRequestBody) (*http.Request, error) {
+func NewCreateClusterRequest(server string, params *CreateClusterParams, body CreateClusterJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateClusterRequestWithBody(server, "application/json", bodyReader)
+	return NewCreateClusterRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewCreateClusterRequestWithBody generates requests for CreateCluster with any type of body
-func NewCreateClusterRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateClusterRequestWithBody(server string, params *CreateClusterParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -548,12 +921,61 @@ func NewCreateClusterRequestWithBody(server string, contentType string, body io.
 		return nil, err
 	}
 
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Id != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id", *params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
 	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetClusterHealthRequest generates requests for GetClusterHealth
+func NewGetClusterHealthRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/clusters/health")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -719,18 +1141,18 @@ func NewListVMsRequest(server string, params *ListVMsParams) (*http.Request, err
 }
 
 // NewCreateVMRequest calls the generic CreateVM builder with application/json body
-func NewCreateVMRequest(server string, body CreateVMJSONRequestBody) (*http.Request, error) {
+func NewCreateVMRequest(server string, params *CreateVMParams, body CreateVMJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
 	buf, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 	bodyReader = bytes.NewReader(buf)
-	return NewCreateVMRequestWithBody(server, "application/json", bodyReader)
+	return NewCreateVMRequestWithBody(server, params, "application/json", bodyReader)
 }
 
 // NewCreateVMRequestWithBody generates requests for CreateVM with any type of body
-func NewCreateVMRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewCreateVMRequestWithBody(server string, params *CreateVMParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -748,12 +1170,61 @@ func NewCreateVMRequestWithBody(server string, contentType string, body io.Reade
 		return nil, err
 	}
 
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Id != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "id", *params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
 	req, err := http.NewRequest("POST", queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetVMHealthRequest generates requests for GetVMHealth
+func NewGetVMHealthRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/vms/health")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -873,9 +1344,12 @@ type ClientWithResponsesInterface interface {
 	ListClustersWithResponse(ctx context.Context, params *ListClustersParams, reqEditors ...RequestEditorFn) (*ListClustersResponse, error)
 
 	// CreateClusterWithBodyWithResponse request with any body
-	CreateClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateClusterResponse, error)
+	CreateClusterWithBodyWithResponse(ctx context.Context, params *CreateClusterParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateClusterResponse, error)
 
-	CreateClusterWithResponse(ctx context.Context, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateClusterResponse, error)
+	CreateClusterWithResponse(ctx context.Context, params *CreateClusterParams, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateClusterResponse, error)
+
+	// GetClusterHealthWithResponse request
+	GetClusterHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClusterHealthResponse, error)
 
 	// DeleteClusterWithResponse request
 	DeleteClusterWithResponse(ctx context.Context, clusterId string, reqEditors ...RequestEditorFn) (*DeleteClusterResponse, error)
@@ -890,9 +1364,12 @@ type ClientWithResponsesInterface interface {
 	ListVMsWithResponse(ctx context.Context, params *ListVMsParams, reqEditors ...RequestEditorFn) (*ListVMsResponse, error)
 
 	// CreateVMWithBodyWithResponse request with any body
-	CreateVMWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVMResponse, error)
+	CreateVMWithBodyWithResponse(ctx context.Context, params *CreateVMParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVMResponse, error)
 
-	CreateVMWithResponse(ctx context.Context, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVMResponse, error)
+	CreateVMWithResponse(ctx context.Context, params *CreateVMParams, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVMResponse, error)
+
+	// GetVMHealthWithResponse request
+	GetVMHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVMHealthResponse, error)
 
 	// DeleteVMWithResponse request
 	DeleteVMWithResponse(ctx context.Context, vmId string, reqEditors ...RequestEditorFn) (*DeleteVMResponse, error)
@@ -927,7 +1404,7 @@ func (r ListClustersResponse) StatusCode() int {
 type CreateClusterResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
-	JSON201                       *ClusterResource
+	JSON201                       *Cluster
 	ApplicationproblemJSON400     *Error
 	ApplicationproblemJSONDefault *Error
 }
@@ -942,6 +1419,29 @@ func (r CreateClusterResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateClusterResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetClusterHealthResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Health
+	JSON503      *Health
+}
+
+// Status returns HTTPResponse.Status
+func (r GetClusterHealthResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetClusterHealthResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -974,7 +1474,7 @@ func (r DeleteClusterResponse) StatusCode() int {
 type GetClusterResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
-	JSON200                       *ClusterResource
+	JSON200                       *Cluster
 	ApplicationproblemJSON404     *Error
 	ApplicationproblemJSONDefault *Error
 }
@@ -1044,7 +1544,7 @@ func (r ListVMsResponse) StatusCode() int {
 type CreateVMResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
-	JSON201                       *VMResource
+	JSON201                       *VM
 	ApplicationproblemJSON400     *Error
 	ApplicationproblemJSON409     *Error
 	ApplicationproblemJSONDefault *Error
@@ -1060,6 +1560,29 @@ func (r CreateVMResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r CreateVMResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetVMHealthResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *Health
+	JSON503      *Health
+}
+
+// Status returns HTTPResponse.Status
+func (r GetVMHealthResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetVMHealthResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -1092,7 +1615,7 @@ func (r DeleteVMResponse) StatusCode() int {
 type GetVMResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
-	JSON200                       *VMResource
+	JSON200                       *VM
 	ApplicationproblemJSON404     *Error
 	ApplicationproblemJSONDefault *Error
 }
@@ -1123,20 +1646,29 @@ func (c *ClientWithResponses) ListClustersWithResponse(ctx context.Context, para
 }
 
 // CreateClusterWithBodyWithResponse request with arbitrary body returning *CreateClusterResponse
-func (c *ClientWithResponses) CreateClusterWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateClusterResponse, error) {
-	rsp, err := c.CreateClusterWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateClusterWithBodyWithResponse(ctx context.Context, params *CreateClusterParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateClusterResponse, error) {
+	rsp, err := c.CreateClusterWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateClusterResponse(rsp)
 }
 
-func (c *ClientWithResponses) CreateClusterWithResponse(ctx context.Context, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateClusterResponse, error) {
-	rsp, err := c.CreateCluster(ctx, body, reqEditors...)
+func (c *ClientWithResponses) CreateClusterWithResponse(ctx context.Context, params *CreateClusterParams, body CreateClusterJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateClusterResponse, error) {
+	rsp, err := c.CreateCluster(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateClusterResponse(rsp)
+}
+
+// GetClusterHealthWithResponse request returning *GetClusterHealthResponse
+func (c *ClientWithResponses) GetClusterHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClusterHealthResponse, error) {
+	rsp, err := c.GetClusterHealth(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetClusterHealthResponse(rsp)
 }
 
 // DeleteClusterWithResponse request returning *DeleteClusterResponse
@@ -1176,20 +1708,29 @@ func (c *ClientWithResponses) ListVMsWithResponse(ctx context.Context, params *L
 }
 
 // CreateVMWithBodyWithResponse request with arbitrary body returning *CreateVMResponse
-func (c *ClientWithResponses) CreateVMWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVMResponse, error) {
-	rsp, err := c.CreateVMWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) CreateVMWithBodyWithResponse(ctx context.Context, params *CreateVMParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVMResponse, error) {
+	rsp, err := c.CreateVMWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateVMResponse(rsp)
 }
 
-func (c *ClientWithResponses) CreateVMWithResponse(ctx context.Context, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVMResponse, error) {
-	rsp, err := c.CreateVM(ctx, body, reqEditors...)
+func (c *ClientWithResponses) CreateVMWithResponse(ctx context.Context, params *CreateVMParams, body CreateVMJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVMResponse, error) {
+	rsp, err := c.CreateVM(ctx, params, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseCreateVMResponse(rsp)
+}
+
+// GetVMHealthWithResponse request returning *GetVMHealthResponse
+func (c *ClientWithResponses) GetVMHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVMHealthResponse, error) {
+	rsp, err := c.GetVMHealth(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetVMHealthResponse(rsp)
 }
 
 // DeleteVMWithResponse request returning *DeleteVMResponse
@@ -1258,7 +1799,7 @@ func ParseCreateClusterResponse(rsp *http.Response) (*CreateClusterResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest ClusterResource
+		var dest Cluster
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1277,6 +1818,39 @@ func ParseCreateClusterResponse(rsp *http.Response) (*CreateClusterResponse, err
 			return nil, err
 		}
 		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetClusterHealthResponse parses an HTTP response from a GetClusterHealthWithResponse call
+func ParseGetClusterHealthResponse(rsp *http.Response) (*GetClusterHealthResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetClusterHealthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Health
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Health
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -1331,7 +1905,7 @@ func ParseGetClusterResponse(rsp *http.Response) (*GetClusterResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest ClusterResource
+		var dest Cluster
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1437,7 +2011,7 @@ func ParseCreateVMResponse(rsp *http.Response) (*CreateVMResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest VMResource
+		var dest VM
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -1463,6 +2037,39 @@ func ParseCreateVMResponse(rsp *http.Response) (*CreateVMResponse, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetVMHealthResponse parses an HTTP response from a GetVMHealthWithResponse call
+func ParseGetVMHealthResponse(rsp *http.Response) (*GetVMHealthResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetVMHealthResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Health
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Health
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -1517,7 +2124,7 @@ func ParseGetVMResponse(rsp *http.Response) (*GetVMResponse, error) {
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest VMResource
+		var dest VM
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

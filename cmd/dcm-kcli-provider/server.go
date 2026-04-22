@@ -72,10 +72,22 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		ClusterCreateTimeout: cfg.ClusterCreateTimeout,
 	}
 	s.monitor = monitor.New(s.kwebClient, s.store, s.publisher, monCfg, logger)
+
+	// Derive collection paths from the OpenAPI spec so the registered
+	// endpoints match exactly what SPM will POST/DELETE/health-check.
+	postPaths, err := apiv1alpha1.PostPaths()
+	if err != nil {
+		s.store.Close()
+		return nil, fmt.Errorf("resolving post paths from OpenAPI spec: %w", err)
+	}
+	baseURL := "/api/v1alpha1"
+	vmSuffix := postPaths["vm"]       // "/vms"
+	clusterSuffix := postPaths["cluster"] // "/clusters"
+
 	vmProviderCfg := registration.ProviderConfig{
 		ID:            cfg.ProviderIDVM,
 		Name:          cfg.ProviderNameVM,
-		Endpoint:      fmt.Sprintf("http://%s/api/v1alpha1", cfg.ListenAddress),
+		Endpoint:      fmt.Sprintf("http://%s%s%s", cfg.ListenAddress, baseURL, vmSuffix),
 		ServiceType:   "vm",
 		SchemaVersion: cfg.SchemaVersion,
 	}
@@ -91,7 +103,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	clusterProviderCfg := registration.ProviderConfig{
 		ID:            cfg.ProviderIDCluster,
 		Name:          cfg.ProviderNameCluster,
-		Endpoint:      fmt.Sprintf("http://%s/api/v1alpha1", cfg.ListenAddress),
+		Endpoint:      fmt.Sprintf("http://%s%s%s", cfg.ListenAddress, baseURL, clusterSuffix),
 		ServiceType:   "cluster",
 		SchemaVersion: cfg.SchemaVersion,
 	}
@@ -114,9 +126,9 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		return nil, fmt.Errorf("loading OpenAPI spec: %w", err)
 	}
 
-	baseURL := ""
+	serverBaseURL := ""
 	if len(swagger.Servers) > 0 {
-		baseURL = swagger.Servers[0].URL
+		serverBaseURL = swagger.Servers[0].URL
 	}
 
 	r := chi.NewRouter()
@@ -130,7 +142,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		SilenceServersWarning: true,
 	}))
 
-	apiserver.HandlerFromMuxWithBaseURL(strictHandler, r, baseURL)
+	apiserver.HandlerFromMuxWithBaseURL(strictHandler, r, serverBaseURL)
 
 	s.httpServer = &http.Server{
 		Handler:      r,

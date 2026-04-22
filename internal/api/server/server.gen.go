@@ -15,42 +15,36 @@ import (
 	strictnethttp "github.com/oapi-codegen/runtime/strictmiddleware/nethttp"
 )
 
-// Defines values for ClusterCreateRequestClusterType.
+// Defines values for ClusterSpecServiceType.
 const (
-	Generic    ClusterCreateRequestClusterType = "generic"
-	Hypershift ClusterCreateRequestClusterType = "hypershift"
-	K3s        ClusterCreateRequestClusterType = "k3s"
-	Microshift ClusterCreateRequestClusterType = "microshift"
-	Openshift  ClusterCreateRequestClusterType = "openshift"
+	ClusterSpecServiceTypeCluster ClusterSpecServiceType = "cluster"
 )
 
-// Valid indicates whether the value is a known member of the ClusterCreateRequestClusterType enum.
-func (e ClusterCreateRequestClusterType) Valid() bool {
+// Valid indicates whether the value is a known member of the ClusterSpecServiceType enum.
+func (e ClusterSpecServiceType) Valid() bool {
 	switch e {
-	case Generic:
-		return true
-	case Hypershift:
-		return true
-	case K3s:
-		return true
-	case Microshift:
-		return true
-	case Openshift:
+	case ClusterSpecServiceTypeCluster:
 		return true
 	default:
 		return false
 	}
 }
 
-// Defines values for ClusterCreateRequestServiceType.
+// Defines values for ControlPlaneNodesCount.
 const (
-	Cluster ClusterCreateRequestServiceType = "cluster"
+	N1 ControlPlaneNodesCount = 1
+	N3 ControlPlaneNodesCount = 3
+	N5 ControlPlaneNodesCount = 5
 )
 
-// Valid indicates whether the value is a known member of the ClusterCreateRequestServiceType enum.
-func (e ClusterCreateRequestServiceType) Valid() bool {
+// Valid indicates whether the value is a known member of the ControlPlaneNodesCount enum.
+func (e ControlPlaneNodesCount) Valid() bool {
 	switch e {
-	case Cluster:
+	case N1:
+		return true
+	case N3:
+		return true
+	case N5:
 		return true
 	default:
 		return false
@@ -75,13 +69,13 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
-// Defines values for VMCreateRequestServiceType.
+// Defines values for VMSpecServiceType.
 const (
-	Vm VMCreateRequestServiceType = "vm"
+	Vm VMSpecServiceType = "vm"
 )
 
-// Valid indicates whether the value is a known member of the VMCreateRequestServiceType enum.
-func (e VMCreateRequestServiceType) Valid() bool {
+// Valid indicates whether the value is a known member of the VMSpecServiceType enum.
+func (e VMSpecServiceType) Valid() bool {
 	switch e {
 	case Vm:
 		return true
@@ -95,37 +89,54 @@ type Access struct {
 	SshPublicKey *string `json:"ssh_public_key,omitempty"`
 }
 
-// ClusterCreateRequest defines model for ClusterCreateRequest.
-type ClusterCreateRequest struct {
-	ClusterType  ClusterCreateRequestClusterType `json:"cluster_type"`
-	ControlPlane *struct {
-		Count *int `json:"count,omitempty"`
-	} `json:"control_plane,omitempty"`
-	Metadata    ServiceMetadata                 `json:"metadata"`
-	ServiceType ClusterCreateRequestServiceType `json:"service_type"`
-	Workers     *struct {
-		Count *int `json:"count,omitempty"`
-	} `json:"workers,omitempty"`
+// Cluster Kubernetes cluster resource
+type Cluster struct {
+	Id *string `json:"id,omitempty"`
+
+	// Path Resource path (e.g. clusters/{id})
+	Path *string `json:"path,omitempty"`
+
+	// Spec Provider-agnostic cluster specification aligned with the DCM catalog ClusterSpec
+	Spec   ClusterSpec `json:"spec"`
+	Status *string     `json:"status,omitempty"`
 }
-
-// ClusterCreateRequestClusterType defines model for ClusterCreateRequest.ClusterType.
-type ClusterCreateRequestClusterType string
-
-// ClusterCreateRequestServiceType defines model for ClusterCreateRequest.ServiceType.
-type ClusterCreateRequestServiceType string
 
 // ClusterList defines model for ClusterList.
 type ClusterList struct {
-	NextPageToken *string            `json:"next_page_token,omitempty"`
-	Results       *[]ClusterResource `json:"results,omitempty"`
+	NextPageToken *string    `json:"next_page_token,omitempty"`
+	Results       *[]Cluster `json:"results,omitempty"`
 }
 
-// ClusterResource defines model for ClusterResource.
-type ClusterResource struct {
-	Id      *string `json:"id,omitempty"`
-	Name    *string `json:"name,omitempty"`
-	Status  *string `json:"status,omitempty"`
-	Version *string `json:"version,omitempty"`
+// ClusterSpec Provider-agnostic cluster specification aligned with the DCM catalog ClusterSpec
+type ClusterSpec struct {
+	Metadata ServiceMetadata `json:"metadata"`
+	Nodes    *Nodes          `json:"nodes,omitempty"`
+
+	// ProviderHints Provider-specific configuration (e.g. kcli profile overrides)
+	ProviderHints *ProviderHints         `json:"provider_hints,omitempty"`
+	ServiceType   ClusterSpecServiceType `json:"service_type"`
+
+	// Version Kubernetes version (e.g. 1.30)
+	Version              *string                `json:"version,omitempty"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// ClusterSpecServiceType defines model for ClusterSpec.ServiceType.
+type ClusterSpecServiceType string
+
+// ControlPlaneNodes defines model for ControlPlaneNodes.
+type ControlPlaneNodes struct {
+	Count *ControlPlaneNodesCount `json:"count,omitempty"`
+}
+
+// ControlPlaneNodesCount defines model for ControlPlaneNodes.Count.
+type ControlPlaneNodesCount int
+
+// Disk defines model for Disk.
+type Disk struct {
+	// Capacity Disk capacity with unit suffix (MB, GB, TB)
+	Capacity string `json:"capacity"`
+	Name     string `json:"name"`
 }
 
 // Error RFC 7807 compliant error response
@@ -139,7 +150,7 @@ type Error struct {
 
 // GuestOS defines model for GuestOS.
 type GuestOS struct {
-	// Type kcli profile name
+	// Type OS identifier mapped to a kcli profile (e.g. fedora-39, rhel-9)
 	Type string `json:"type"`
 }
 
@@ -160,40 +171,69 @@ type Memory struct {
 	Size string `json:"size"`
 }
 
+// Nodes defines model for Nodes.
+type Nodes struct {
+	ControlPlane *ControlPlaneNodes `json:"control_plane,omitempty"`
+	Workers      *WorkerNodes       `json:"workers,omitempty"`
+}
+
+// ProviderHints Provider-specific configuration (e.g. kcli profile overrides)
+type ProviderHints map[string]interface{}
+
 // ServiceMetadata defines model for ServiceMetadata.
 type ServiceMetadata struct {
-	Name string `json:"name"`
+	Labels *map[string]string `json:"labels,omitempty"`
+	Name   string             `json:"name"`
 }
 
-// VMCreateRequest defines model for VMCreateRequest.
-type VMCreateRequest struct {
-	Access      *Access                    `json:"access,omitempty"`
-	GuestOs     GuestOS                    `json:"guest_os"`
-	Memory      Memory                     `json:"memory"`
-	Metadata    ServiceMetadata            `json:"metadata"`
-	ServiceType VMCreateRequestServiceType `json:"service_type"`
-	Vcpu        *Vcpu                      `json:"vcpu,omitempty"`
+// Storage defines model for Storage.
+type Storage struct {
+	Disks *[]Disk `json:"disks,omitempty"`
 }
 
-// VMCreateRequestServiceType defines model for VMCreateRequest.ServiceType.
-type VMCreateRequestServiceType string
+// VM Virtual Machine resource
+type VM struct {
+	Id *string `json:"id,omitempty"`
 
-// VMList defines model for VMList.
-type VMList struct {
-	NextPageToken *string       `json:"next_page_token,omitempty"`
-	Results       *[]VMResource `json:"results,omitempty"`
-}
+	// Path Resource path (e.g. vms/{id})
+	Path *string `json:"path,omitempty"`
 
-// VMResource defines model for VMResource.
-type VMResource struct {
-	Id     *string `json:"id,omitempty"`
-	Ip     *string `json:"ip,omitempty"`
-	Name   *string `json:"name,omitempty"`
+	// Spec Provider-agnostic VM specification aligned with the DCM catalog VMSpec
+	Spec   VMSpec  `json:"spec"`
 	Status *string `json:"status,omitempty"`
 }
 
+// VMList defines model for VMList.
+type VMList struct {
+	NextPageToken *string `json:"next_page_token,omitempty"`
+	Results       *[]VM   `json:"results,omitempty"`
+}
+
+// VMSpec Provider-agnostic VM specification aligned with the DCM catalog VMSpec
+type VMSpec struct {
+	Access   *Access         `json:"access,omitempty"`
+	GuestOs  GuestOS         `json:"guest_os"`
+	Memory   *Memory         `json:"memory,omitempty"`
+	Metadata ServiceMetadata `json:"metadata"`
+
+	// ProviderHints Provider-specific configuration (e.g. kcli profile overrides)
+	ProviderHints        *ProviderHints         `json:"provider_hints,omitempty"`
+	ServiceType          VMSpecServiceType      `json:"service_type"`
+	Storage              *Storage               `json:"storage,omitempty"`
+	Vcpu                 *Vcpu                  `json:"vcpu,omitempty"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// VMSpecServiceType defines model for VMSpec.ServiceType.
+type VMSpecServiceType string
+
 // Vcpu defines model for Vcpu.
 type Vcpu struct {
+	Count *int `json:"count,omitempty"`
+}
+
+// WorkerNodes defines model for WorkerNodes.
+type WorkerNodes struct {
 	Count *int `json:"count,omitempty"`
 }
 
@@ -203,17 +243,320 @@ type ListClustersParams struct {
 	PageToken   *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// CreateClusterParams defines parameters for CreateCluster.
+type CreateClusterParams struct {
+	// Id Client-specified instance ID for idempotent creation (provided by SPM)
+	Id *string `form:"id,omitempty" json:"id,omitempty"`
+}
+
 // ListVMsParams defines parameters for ListVMs.
 type ListVMsParams struct {
 	MaxPageSize *int    `form:"max_page_size,omitempty" json:"max_page_size,omitempty"`
 	PageToken   *string `form:"page_token,omitempty" json:"page_token,omitempty"`
 }
 
+// CreateVMParams defines parameters for CreateVM.
+type CreateVMParams struct {
+	// Id Client-specified instance ID for idempotent creation (provided by SPM)
+	Id *string `form:"id,omitempty" json:"id,omitempty"`
+}
+
 // CreateClusterJSONRequestBody defines body for CreateCluster for application/json ContentType.
-type CreateClusterJSONRequestBody = ClusterCreateRequest
+type CreateClusterJSONRequestBody = Cluster
 
 // CreateVMJSONRequestBody defines body for CreateVM for application/json ContentType.
-type CreateVMJSONRequestBody = VMCreateRequest
+type CreateVMJSONRequestBody = VM
+
+// Getter for additional properties for ClusterSpec. Returns the specified
+// element and whether it was found
+func (a ClusterSpec) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for ClusterSpec
+func (a *ClusterSpec) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for ClusterSpec to handle AdditionalProperties
+func (a *ClusterSpec) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["metadata"]; found {
+		err = json.Unmarshal(raw, &a.Metadata)
+		if err != nil {
+			return fmt.Errorf("error reading 'metadata': %w", err)
+		}
+		delete(object, "metadata")
+	}
+
+	if raw, found := object["nodes"]; found {
+		err = json.Unmarshal(raw, &a.Nodes)
+		if err != nil {
+			return fmt.Errorf("error reading 'nodes': %w", err)
+		}
+		delete(object, "nodes")
+	}
+
+	if raw, found := object["provider_hints"]; found {
+		err = json.Unmarshal(raw, &a.ProviderHints)
+		if err != nil {
+			return fmt.Errorf("error reading 'provider_hints': %w", err)
+		}
+		delete(object, "provider_hints")
+	}
+
+	if raw, found := object["service_type"]; found {
+		err = json.Unmarshal(raw, &a.ServiceType)
+		if err != nil {
+			return fmt.Errorf("error reading 'service_type': %w", err)
+		}
+		delete(object, "service_type")
+	}
+
+	if raw, found := object["version"]; found {
+		err = json.Unmarshal(raw, &a.Version)
+		if err != nil {
+			return fmt.Errorf("error reading 'version': %w", err)
+		}
+		delete(object, "version")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for ClusterSpec to handle AdditionalProperties
+func (a ClusterSpec) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["metadata"], err = json.Marshal(a.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+	}
+
+	if a.Nodes != nil {
+		object["nodes"], err = json.Marshal(a.Nodes)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'nodes': %w", err)
+		}
+	}
+
+	if a.ProviderHints != nil {
+		object["provider_hints"], err = json.Marshal(a.ProviderHints)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'provider_hints': %w", err)
+		}
+	}
+
+	object["service_type"], err = json.Marshal(a.ServiceType)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'service_type': %w", err)
+	}
+
+	if a.Version != nil {
+		object["version"], err = json.Marshal(a.Version)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'version': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for VMSpec. Returns the specified
+// element and whether it was found
+func (a VMSpec) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for VMSpec
+func (a *VMSpec) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for VMSpec to handle AdditionalProperties
+func (a *VMSpec) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["access"]; found {
+		err = json.Unmarshal(raw, &a.Access)
+		if err != nil {
+			return fmt.Errorf("error reading 'access': %w", err)
+		}
+		delete(object, "access")
+	}
+
+	if raw, found := object["guest_os"]; found {
+		err = json.Unmarshal(raw, &a.GuestOs)
+		if err != nil {
+			return fmt.Errorf("error reading 'guest_os': %w", err)
+		}
+		delete(object, "guest_os")
+	}
+
+	if raw, found := object["memory"]; found {
+		err = json.Unmarshal(raw, &a.Memory)
+		if err != nil {
+			return fmt.Errorf("error reading 'memory': %w", err)
+		}
+		delete(object, "memory")
+	}
+
+	if raw, found := object["metadata"]; found {
+		err = json.Unmarshal(raw, &a.Metadata)
+		if err != nil {
+			return fmt.Errorf("error reading 'metadata': %w", err)
+		}
+		delete(object, "metadata")
+	}
+
+	if raw, found := object["provider_hints"]; found {
+		err = json.Unmarshal(raw, &a.ProviderHints)
+		if err != nil {
+			return fmt.Errorf("error reading 'provider_hints': %w", err)
+		}
+		delete(object, "provider_hints")
+	}
+
+	if raw, found := object["service_type"]; found {
+		err = json.Unmarshal(raw, &a.ServiceType)
+		if err != nil {
+			return fmt.Errorf("error reading 'service_type': %w", err)
+		}
+		delete(object, "service_type")
+	}
+
+	if raw, found := object["storage"]; found {
+		err = json.Unmarshal(raw, &a.Storage)
+		if err != nil {
+			return fmt.Errorf("error reading 'storage': %w", err)
+		}
+		delete(object, "storage")
+	}
+
+	if raw, found := object["vcpu"]; found {
+		err = json.Unmarshal(raw, &a.Vcpu)
+		if err != nil {
+			return fmt.Errorf("error reading 'vcpu': %w", err)
+		}
+		delete(object, "vcpu")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for VMSpec to handle AdditionalProperties
+func (a VMSpec) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Access != nil {
+		object["access"], err = json.Marshal(a.Access)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'access': %w", err)
+		}
+	}
+
+	object["guest_os"], err = json.Marshal(a.GuestOs)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'guest_os': %w", err)
+	}
+
+	if a.Memory != nil {
+		object["memory"], err = json.Marshal(a.Memory)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'memory': %w", err)
+		}
+	}
+
+	object["metadata"], err = json.Marshal(a.Metadata)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+	}
+
+	if a.ProviderHints != nil {
+		object["provider_hints"], err = json.Marshal(a.ProviderHints)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'provider_hints': %w", err)
+		}
+	}
+
+	object["service_type"], err = json.Marshal(a.ServiceType)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'service_type': %w", err)
+	}
+
+	if a.Storage != nil {
+		object["storage"], err = json.Marshal(a.Storage)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'storage': %w", err)
+		}
+	}
+
+	if a.Vcpu != nil {
+		object["vcpu"], err = json.Marshal(a.Vcpu)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'vcpu': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -222,7 +565,10 @@ type ServerInterface interface {
 	ListClusters(w http.ResponseWriter, r *http.Request, params ListClustersParams)
 	// Create a cluster
 	// (POST /clusters)
-	CreateCluster(w http.ResponseWriter, r *http.Request)
+	CreateCluster(w http.ResponseWriter, r *http.Request, params CreateClusterParams)
+	// Cluster service health check
+	// (GET /clusters/health)
+	GetClusterHealth(w http.ResponseWriter, r *http.Request)
 	// Delete a cluster
 	// (DELETE /clusters/{clusterId})
 	DeleteCluster(w http.ResponseWriter, r *http.Request, clusterId string)
@@ -237,7 +583,10 @@ type ServerInterface interface {
 	ListVMs(w http.ResponseWriter, r *http.Request, params ListVMsParams)
 	// Create a VM
 	// (POST /vms)
-	CreateVM(w http.ResponseWriter, r *http.Request)
+	CreateVM(w http.ResponseWriter, r *http.Request, params CreateVMParams)
+	// VM service health check
+	// (GET /vms/health)
+	GetVMHealth(w http.ResponseWriter, r *http.Request)
 	// Delete a VM
 	// (DELETE /vms/{vmId})
 	DeleteVM(w http.ResponseWriter, r *http.Request, vmId string)
@@ -258,7 +607,13 @@ func (_ Unimplemented) ListClusters(w http.ResponseWriter, r *http.Request, para
 
 // Create a cluster
 // (POST /clusters)
-func (_ Unimplemented) CreateCluster(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) CreateCluster(w http.ResponseWriter, r *http.Request, params CreateClusterParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// Cluster service health check
+// (GET /clusters/health)
+func (_ Unimplemented) GetClusterHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -288,7 +643,13 @@ func (_ Unimplemented) ListVMs(w http.ResponseWriter, r *http.Request, params Li
 
 // Create a VM
 // (POST /vms)
-func (_ Unimplemented) CreateVM(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) CreateVM(w http.ResponseWriter, r *http.Request, params CreateVMParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// VM service health check
+// (GET /vms/health)
+func (_ Unimplemented) GetVMHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -351,8 +712,35 @@ func (siw *ServerInterfaceWrapper) ListClusters(w http.ResponseWriter, r *http.R
 // CreateCluster operation middleware
 func (siw *ServerInterfaceWrapper) CreateCluster(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateClusterParams
+
+	// ------------- Optional query parameter "id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "id", r.URL.Query(), &params.Id, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateCluster(w, r)
+		siw.Handler.CreateCluster(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetClusterHealth operation middleware
+func (siw *ServerInterfaceWrapper) GetClusterHealth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetClusterHealth(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -464,8 +852,35 @@ func (siw *ServerInterfaceWrapper) ListVMs(w http.ResponseWriter, r *http.Reques
 // CreateVM operation middleware
 func (siw *ServerInterfaceWrapper) CreateVM(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateVMParams
+
+	// ------------- Optional query parameter "id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "id", r.URL.Query(), &params.Id, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.CreateVM(w, r)
+		siw.Handler.CreateVM(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetVMHealth operation middleware
+func (siw *ServerInterfaceWrapper) GetVMHealth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetVMHealth(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -645,6 +1060,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 		r.Post(options.BaseURL+"/clusters", wrapper.CreateCluster)
 	})
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/clusters/health", wrapper.GetClusterHealth)
+	})
+	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/clusters/{clusterId}", wrapper.DeleteCluster)
 	})
 	r.Group(func(r chi.Router) {
@@ -658,6 +1076,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/vms", wrapper.CreateVM)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/vms/health", wrapper.GetVMHealth)
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/vms/{vmId}", wrapper.DeleteVM)
@@ -709,14 +1130,15 @@ func (response ListClustersdefaultApplicationProblemPlusJSONResponse) VisitListC
 }
 
 type CreateClusterRequestObject struct {
-	Body *CreateClusterJSONRequestBody
+	Params CreateClusterParams
+	Body   *CreateClusterJSONRequestBody
 }
 
 type CreateClusterResponseObject interface {
 	VisitCreateClusterResponse(w http.ResponseWriter) error
 }
 
-type CreateCluster201JSONResponse ClusterResource
+type CreateCluster201JSONResponse Cluster
 
 func (response CreateCluster201JSONResponse) VisitCreateClusterResponse(w http.ResponseWriter) error {
 
@@ -757,6 +1179,41 @@ func (response CreateClusterdefaultApplicationProblemPlusJSONResponse) VisitCrea
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClusterHealthRequestObject struct {
+}
+
+type GetClusterHealthResponseObject interface {
+	VisitGetClusterHealthResponse(w http.ResponseWriter) error
+}
+
+type GetClusterHealth200JSONResponse Health
+
+func (response GetClusterHealth200JSONResponse) VisitGetClusterHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetClusterHealth503JSONResponse Health
+
+func (response GetClusterHealth503JSONResponse) VisitGetClusterHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -816,7 +1273,7 @@ type GetClusterResponseObject interface {
 	VisitGetClusterResponse(w http.ResponseWriter) error
 }
 
-type GetCluster200JSONResponse ClusterResource
+type GetCluster200JSONResponse Cluster
 
 func (response GetCluster200JSONResponse) VisitGetClusterResponse(w http.ResponseWriter) error {
 
@@ -936,14 +1393,15 @@ func (response ListVMsdefaultApplicationProblemPlusJSONResponse) VisitListVMsRes
 }
 
 type CreateVMRequestObject struct {
-	Body *CreateVMJSONRequestBody
+	Params CreateVMParams
+	Body   *CreateVMJSONRequestBody
 }
 
 type CreateVMResponseObject interface {
 	VisitCreateVMResponse(w http.ResponseWriter) error
 }
 
-type CreateVM201JSONResponse VMResource
+type CreateVM201JSONResponse VM
 
 func (response CreateVM201JSONResponse) VisitCreateVMResponse(w http.ResponseWriter) error {
 
@@ -998,6 +1456,41 @@ func (response CreateVMdefaultApplicationProblemPlusJSONResponse) VisitCreateVMR
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVMHealthRequestObject struct {
+}
+
+type GetVMHealthResponseObject interface {
+	VisitGetVMHealthResponse(w http.ResponseWriter) error
+}
+
+type GetVMHealth200JSONResponse Health
+
+func (response GetVMHealth200JSONResponse) VisitGetVMHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetVMHealth503JSONResponse Health
+
+func (response GetVMHealth503JSONResponse) VisitGetVMHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(503)
 	_, err := buf.WriteTo(w)
 	return err
 }
@@ -1057,7 +1550,7 @@ type GetVMResponseObject interface {
 	VisitGetVMResponse(w http.ResponseWriter) error
 }
 
-type GetVM200JSONResponse VMResource
+type GetVM200JSONResponse VM
 
 func (response GetVM200JSONResponse) VisitGetVMResponse(w http.ResponseWriter) error {
 
@@ -1110,6 +1603,9 @@ type StrictServerInterface interface {
 	// Create a cluster
 	// (POST /clusters)
 	CreateCluster(ctx context.Context, request CreateClusterRequestObject) (CreateClusterResponseObject, error)
+	// Cluster service health check
+	// (GET /clusters/health)
+	GetClusterHealth(ctx context.Context, request GetClusterHealthRequestObject) (GetClusterHealthResponseObject, error)
 	// Delete a cluster
 	// (DELETE /clusters/{clusterId})
 	DeleteCluster(ctx context.Context, request DeleteClusterRequestObject) (DeleteClusterResponseObject, error)
@@ -1125,6 +1621,9 @@ type StrictServerInterface interface {
 	// Create a VM
 	// (POST /vms)
 	CreateVM(ctx context.Context, request CreateVMRequestObject) (CreateVMResponseObject, error)
+	// VM service health check
+	// (GET /vms/health)
+	GetVMHealth(ctx context.Context, request GetVMHealthRequestObject) (GetVMHealthResponseObject, error)
 	// Delete a VM
 	// (DELETE /vms/{vmId})
 	DeleteVM(ctx context.Context, request DeleteVMRequestObject) (DeleteVMResponseObject, error)
@@ -1189,8 +1688,10 @@ func (sh *strictHandler) ListClusters(w http.ResponseWriter, r *http.Request, pa
 }
 
 // CreateCluster operation middleware
-func (sh *strictHandler) CreateCluster(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) CreateCluster(w http.ResponseWriter, r *http.Request, params CreateClusterParams) {
 	var request CreateClusterRequestObject
+
+	request.Params = params
 
 	var body CreateClusterJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1212,6 +1713,30 @@ func (sh *strictHandler) CreateCluster(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateClusterResponseObject); ok {
 		if err := validResponse.VisitCreateClusterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetClusterHealth operation middleware
+func (sh *strictHandler) GetClusterHealth(w http.ResponseWriter, r *http.Request) {
+	var request GetClusterHealthRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetClusterHealth(ctx, request.(GetClusterHealthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetClusterHealth")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetClusterHealthResponseObject); ok {
+		if err := validResponse.VisitGetClusterHealthResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1322,8 +1847,10 @@ func (sh *strictHandler) ListVMs(w http.ResponseWriter, r *http.Request, params 
 }
 
 // CreateVM operation middleware
-func (sh *strictHandler) CreateVM(w http.ResponseWriter, r *http.Request) {
+func (sh *strictHandler) CreateVM(w http.ResponseWriter, r *http.Request, params CreateVMParams) {
 	var request CreateVMRequestObject
+
+	request.Params = params
 
 	var body CreateVMJSONRequestBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1345,6 +1872,30 @@ func (sh *strictHandler) CreateVM(w http.ResponseWriter, r *http.Request) {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(CreateVMResponseObject); ok {
 		if err := validResponse.VisitCreateVMResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetVMHealth operation middleware
+func (sh *strictHandler) GetVMHealth(w http.ResponseWriter, r *http.Request) {
+	var request GetVMHealthRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetVMHealth(ctx, request.(GetVMHealthRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetVMHealth")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetVMHealthResponseObject); ok {
+		if err := validResponse.VisitGetVMHealthResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {

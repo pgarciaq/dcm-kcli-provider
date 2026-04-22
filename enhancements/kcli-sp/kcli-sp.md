@@ -1104,7 +1104,7 @@ items were audited and intentionally deferred:
 | kweb `DELETE /vms/{name}` returns HTML 500 | Filed as [karmab/kcli#863](https://github.com/karmab/kcli/issues/863). The SP correctly detects and reports this as a kweb error. Workaround: `kcli delete vm <name> -y`. |
 | kweb returns HTTP 200 for conflicts | kweb's `POST /vms` returns `HTTP 200 {"result":"failure","reason":"... already exists"}` instead of `HTTP 409`. The kweb client detects the "already exists" pattern in 200 responses and maps it to `ErrConflict`, which the handler returns as `409`. |
 | kweb default port changed in kcli v99.0 | kweb now defaults to port 8000 (was 18000). The `kcli web` subcommand was renamed to a standalone `kweb` binary. |
-| SPM generic resource protocol not implemented | The DCM control-plane flow (catalog → placement → policy → SPM → SP) uses a generic `POST {endpoint}?id=...` protocol to create resources on providers. The kcli SP implements service-type-specific endpoints (`POST /vms`, `POST /clusters`) instead. Direct SP API calls work; the full DCM flow (including the UI) requires implementing this protocol. See `docs/examples/` for sample catalog items and policies. |
+| SPM generic resource protocol implemented | The kcli SP now implements the SPM protocol: `POST {endpoint}?id=...` with `{"spec": <CatalogSpec>}` body, `DELETE {endpoint}/{id}`, and `GET {endpoint}/health`. Registration endpoints point to collection URLs (`/api/v1alpha1/vms`, `/api/v1alpha1/clusters`). The API schema was aligned with the catalog VMSpec/ClusterSpec (breaking change from the original flat request format). |
 | OpenAPI validator middleware vs base URL | The `nethttpmiddleware.OapiRequestValidatorWithOptions` middleware is wired on the chi router and works correctly with the `servers[0].url` base path from the OpenAPI spec. Earlier attempts to combine it with `HandlerWithOptions` caused path mismatches; the current approach (middleware on router, then `HandlerFromMuxWithBaseURL`) follows the kubevirt-service-provider pattern and works. |
 | Store migrations list is empty | `store.go` has a schema versioning framework with `currentSchemaVersion = 1` and a `runMigrations` hook. No migrations exist yet because the schema has not changed. When the schema evolves, migrations are added to the `migrations` slice. |
 
@@ -1147,6 +1147,15 @@ On downgrade:
   format, startup readiness self-probe, cluster creation timeout, profile
   validation via GET /vmprofiles, dcm- name prefix for resources, and
   cross-references to k8s-container-sp and status-report-implementation.
+- 2026-04-22: Implemented SPM generic resource protocol. Breaking API
+  change: request body now uses `{"spec": <CatalogSpec>}` wrapper aligned
+  with DCM catalog VMSpec/ClusterSpec. Added `?id=` query param to POST
+  endpoints (SPM-provided instance ID). Registration endpoints now point
+  to collection URLs (`/vms`, `/clusters`). Added `/vms/health` and
+  `/clusters/health` endpoints for SPM health probes. Response includes
+  `id`, `status`, and `path` at top level for SPM compatibility. Cluster
+  type resolved via `provider_hints.kcli.cluster_type`. VM profile
+  overridable via `provider_hints.kcli.profile`.
 
 ## Drawbacks
 
