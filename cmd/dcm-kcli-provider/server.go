@@ -12,9 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
+	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
+	apiv1alpha1 "github.com/pgarciaq/dcm-kcli-provider/api/v1alpha1"
 	apiserver "github.com/pgarciaq/dcm-kcli-provider/internal/api/server"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/config"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
@@ -88,12 +91,29 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version)
 	strictHandler := apiserver.NewStrictHandler(impl, nil)
 
+	swagger, err := apiv1alpha1.GetSwagger()
+	if err != nil {
+		s.store.Close()
+		return nil, fmt.Errorf("loading OpenAPI spec: %w", err)
+	}
+
+	baseURL := ""
+	if len(swagger.Servers) > 0 {
+		baseURL = swagger.Servers[0].URL
+	}
+
 	r := chi.NewRouter()
 	r.Use(handlers.PanicRecovery(logger))
 	r.Use(middleware.Logger)
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
+	r.Use(nethttpmiddleware.OapiRequestValidatorWithOptions(swagger, &nethttpmiddleware.Options{
+		Options: openapi3filter.Options{
+			AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
+		},
+		SilenceServersWarning: true,
+	}))
 
-	apiserver.HandlerFromMuxWithBaseURL(strictHandler, r, "/api/v1alpha1")
+	apiserver.HandlerFromMuxWithBaseURL(strictHandler, r, baseURL)
 
 	s.httpServer = &http.Server{
 		Handler:      r,
