@@ -202,7 +202,7 @@ var _ = Describe("Lifecycle", func() {
 		go func() { _ = httpServer.Serve(listener) }()
 
 		client := &http.Client{Timeout: 10 * time.Second}
-		go client.Get(fmt.Sprintf("http://%s/slow", addr))
+		go func() { _, _ = client.Get(fmt.Sprintf("http://%s/slow", addr)) }()
 		time.Sleep(100 * time.Millisecond)
 
 		shutCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -234,7 +234,7 @@ var _ = Describe("Lifecycle", func() {
 				}
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			w.WriteHeader(200)
 		})
 
@@ -247,7 +247,7 @@ var _ = Describe("Lifecycle", func() {
 		client := &http.Client{Timeout: 5 * time.Second}
 		resp, err := client.Get(fmt.Sprintf("http://%s/api/v1alpha1/vms", addr))
 		Expect(err).NotTo(HaveOccurred())
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		Expect(resp.StatusCode).To(Equal(504))
 	})
 

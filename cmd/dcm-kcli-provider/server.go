@@ -77,7 +77,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	// endpoints match exactly what SPM will POST/DELETE/health-check.
 	postPaths, err := apiv1alpha1.PostPaths()
 	if err != nil {
-		s.store.Close()
+		_ = s.store.Close()
 		return nil, fmt.Errorf("resolving post paths from OpenAPI spec: %w", err)
 	}
 	baseURL := "/api/v1alpha1"
@@ -96,7 +96,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 	vmRegistrar, err := registration.NewRegistrar(cfg.SPMURL, vmProviderCfg, logger)
 	if err != nil {
-		s.store.Close()
+		_ = s.store.Close()
 		return nil, fmt.Errorf("creating vm registrar: %w", err)
 	}
 
@@ -112,7 +112,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 	clusterRegistrar, err := registration.NewRegistrar(cfg.SPMURL, clusterProviderCfg, logger)
 	if err != nil {
-		s.store.Close()
+		_ = s.store.Close()
 		return nil, fmt.Errorf("creating cluster registrar: %w", err)
 	}
 	s.registrars = []*registration.Registrar{vmRegistrar, clusterRegistrar}
@@ -122,7 +122,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	swagger, err := apiv1alpha1.GetSwagger()
 	if err != nil {
-		s.store.Close()
+		_ = s.store.Close()
 		return nil, fmt.Errorf("loading OpenAPI spec: %w", err)
 	}
 
@@ -162,7 +162,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.logger.Info("HTTP server listening", "address", s.listener.Addr().String())
 
-	go s.httpServer.Serve(s.listener)
+	go func() { _ = s.httpServer.Serve(s.listener) }()
 
 	if !s.selfProbe(ctx) {
 		return fmt.Errorf("self-probe failed: /health did not return 200")
@@ -239,7 +239,7 @@ func (s *Server) selfProbe(ctx context.Context) bool {
 		}
 		resp, err := client.Get(fmt.Sprintf("http://%s/api/v1alpha1/health", addr))
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return true
 			}
