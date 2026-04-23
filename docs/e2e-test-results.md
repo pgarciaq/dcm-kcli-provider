@@ -266,7 +266,7 @@ the monitor. A full regression test was required.
 | **VM Lifecycle: Create via catalog** | `POST /catalog-item-instances` with Fedora VM catalog item | **PASS** — 201, SPM delegated `POST /vms?id=<uuid>` to SP |
 | **VM Lifecycle: Verify in kweb** | `curl http://localhost:8000/vms` | **PASS** — `dcm-<uuid>` visible with status `up` |
 | **VM Lifecycle: Monitor detects RUNNING** | Wait for poll cycle | **PASS** — status transitions from PROVISIONING to RUNNING |
-| **VM Lifecycle: Delete** | `DELETE /vms/<id>` | **KNOWN ISSUE** — kweb DELETE returns 500 ([karmab/kcli#864](https://github.com/karmab/kcli/issues/864)); SP correctly propagates as RFC 7807 |
+| **VM Lifecycle: Delete** | `DELETE /vms/<id>` | **KNOWN ISSUE** — kweb DELETE returns 500 ([karmab/kcli#863](https://github.com/karmab/kcli/issues/863)); SP correctly propagates as RFC 7807 |
 | **VM Lifecycle: Cleanup via kcli CLI** | `kcli delete vm dcm-<uuid>` | **PASS** — VM deleted, monitor removes from store |
 | **Cluster Lifecycle: Create via SP** | `POST /clusters?id=test-regression-cluster` | **PASS** — 201, cluster created in kweb |
 | **Cluster Lifecycle: Delete** | `DELETE /clusters/test-regression-cluster` | **PASS** — 204 No Content, removed from SP and kweb |
@@ -279,5 +279,5 @@ the monitor. A full regression test was required.
 
 **All tests pass.** The lint fixes did not introduce any regressions. The only
 failure is the pre-existing upstream kweb DELETE bug
-([karmab/kcli#864](https://github.com/karmab/kcli/issues/864)), which is not
+([karmab/kcli#863](https://github.com/karmab/kcli/issues/863)), which is not
 related to our code changes.
