@@ -2,3 +2,4 @@
 bin
 vendor
 /dcm-kcli-provider
+/dcm-kcli-provider-*

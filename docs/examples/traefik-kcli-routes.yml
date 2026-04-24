@@ -1,0 +1,69 @@
+# Traefik dynamic routes for the kcli service provider.
+#
+# The DCM api-gateway compose ships routes for core services (catalog-manager,
+# policy-manager, etc.) but does NOT include routes for individual service
+# providers.  Add the snippets below to the gateway's
+# config/dynamic/routes.yml to expose the kcli SP through Traefik.
+#
+# The kcli SP registers two providers (kcli-vm and kcli-cluster) but listens
+# on a single address.  Replace "kcli-sp:8080" with the actual host:port
+# if you are not using the compose network (e.g. "10.89.0.1:8085" when
+# running the SP directly on the host with podman bridge networking).
+#
+# Merge these under the existing `http:` top-level key in routes.yml.
+
+http:
+  routers:
+    # ── kcli VMs ──────────────────────────────────────────────
+    kcli-vms-collection:
+      rule: "Path(`/api/v1alpha1/vms`) && (Method(`GET`) || Method(`POST`))"
+      service: kcli-sp
+      entryPoints: [web]
+
+    kcli-vms-resource:
+      rule: "PathRegexp(`^/api/v1alpha1/vms/[^/:]+$`) && (Method(`GET`) || Method(`DELETE`))"
+      service: kcli-sp
+      entryPoints: [web]
+
+    kcli-vms-health:
+      rule: "Path(`/api/v1alpha1/vms/health`) && Method(`GET`)"
+      service: kcli-sp
+      entryPoints: [web]
+      priority: 200  # higher than the resource wildcard
+
+    # ── kcli Clusters ─────────────────────────────────────────
+    kcli-clusters-collection:
+      rule: "Path(`/api/v1alpha1/clusters`) && (Method(`GET`) || Method(`POST`))"
+      service: kcli-sp
+      entryPoints: [web]
+
+    kcli-clusters-resource:
+      rule: "PathRegexp(`^/api/v1alpha1/clusters/[^/:]+$`) && (Method(`GET`) || Method(`DELETE`))"
+      service: kcli-sp
+      entryPoints: [web]
+
+    kcli-clusters-health:
+      rule: "Path(`/api/v1alpha1/clusters/health`) && Method(`GET`)"
+      service: kcli-sp
+      entryPoints: [web]
+      priority: 200
+
+    # ── Placement resources (served by placement-manager) ─────
+    # The DCM UI "Resources" tab queries this endpoint.  It is NOT
+    # included in the default api-gateway routes — add it if you use
+    # the DCM UI.
+    resources-collection:
+      rule: "Path(`/api/v1alpha1/resources`) && Method(`GET`)"
+      service: placement-manager
+      entryPoints: [web]
+
+    resources-resource:
+      rule: "PathRegexp(`^/api/v1alpha1/resources/[^/:]+$`) && (Method(`GET`) || Method(`DELETE`))"
+      service: placement-manager
+      entryPoints: [web]
+
+  services:
+    kcli-sp:
+      loadBalancer:
+        servers:
+          - url: "http://kcli-sp:8080"

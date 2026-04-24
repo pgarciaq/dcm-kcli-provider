@@ -221,6 +221,7 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 	if spec.Access != nil && spec.Access.SshPublicKey != nil && *spec.Access.SshPublicKey != "" {
 		params["parameters[keys]"] = []string{*spec.Access.SshPublicKey}
 	}
+	mergeKcliHints(spec.ProviderHints, params, "profile")
 
 	if err := s.kweb.CreateVM(ctx, kcliName, profile, params); err != nil {
 		if errors.Is(err, kweb.ErrConflict) {
@@ -450,6 +451,7 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 			params["workers"] = *spec.Nodes.Workers.Count
 		}
 	}
+	mergeKcliHints(spec.ProviderHints, params, "cluster_type")
 
 	s.createMu.Lock()
 	createErr := s.kweb.CreateCluster(ctx, kcliName, kwebType, params)
@@ -751,6 +753,35 @@ func resolveClusterType(spec ClusterSpec) string {
 		}
 	}
 	return "generic"
+}
+
+// mergeKcliHints copies kcli-specific parameters (e.g. "image", "network")
+// from provider_hints.kcli into the kweb params map, skipping any keys in the
+// exclude set (typically "cluster_type" and "profile" which are handled separately).
+func mergeKcliHints(hints *ProviderHints, params map[string]interface{}, excludeKeys ...string) {
+	if hints == nil {
+		return
+	}
+	kcli, ok := (*hints)["kcli"]
+	if !ok {
+		return
+	}
+	m, ok := kcli.(map[string]interface{})
+	if !ok {
+		return
+	}
+	skip := make(map[string]bool, len(excludeKeys))
+	for _, k := range excludeKeys {
+		skip[k] = true
+	}
+	for k, v := range m {
+		if skip[k] {
+			continue
+		}
+		if _, exists := params[k]; !exists {
+			params[k] = v
+		}
+	}
 }
 
 func parseMemorySize(size string) (int, error) {

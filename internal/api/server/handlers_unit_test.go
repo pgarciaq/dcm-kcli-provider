@@ -92,12 +92,25 @@ func clusterBody(name string, opts ...func(map[string]interface{})) string {
 
 func withClusterType(ct string) func(map[string]interface{}) {
 	return func(spec map[string]interface{}) {
-		if spec["provider_hints"] == nil {
-			spec["provider_hints"] = map[string]interface{}{}
-		}
-		hints := spec["provider_hints"].(map[string]interface{})
-		hints["kcli"] = map[string]interface{}{"cluster_type": ct}
+		ensureKcliHints(spec)["cluster_type"] = ct
 	}
+}
+
+func withKcliHint(key string, value interface{}) func(map[string]interface{}) {
+	return func(spec map[string]interface{}) {
+		ensureKcliHints(spec)[key] = value
+	}
+}
+
+func ensureKcliHints(spec map[string]interface{}) map[string]interface{} {
+	if spec["provider_hints"] == nil {
+		spec["provider_hints"] = map[string]interface{}{}
+	}
+	hints := spec["provider_hints"].(map[string]interface{})
+	if hints["kcli"] == nil {
+		hints["kcli"] = map[string]interface{}{}
+	}
+	return hints["kcli"].(map[string]interface{})
 }
 
 func withNodes(ctlplanes, workers int) func(map[string]interface{}) {
@@ -486,6 +499,39 @@ var _ = Describe("Handlers", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(201))
+	})
+
+	It("forwards kcli hints (e.g. image) to kweb params", func() {
+		body := clusterBody("img-cluster", withClusterType("k3s"), withNodes(1, 1), withKcliHint("image", "fedora41"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		Expect(kwebMock.lastCreateClusterParams).To(HaveKeyWithValue("image", "fedora41"))
+		Expect(kwebMock.lastCreateClusterParams).To(HaveKeyWithValue("ctlplanes", 1))
+		Expect(kwebMock.lastCreateClusterParams).To(HaveKeyWithValue("workers", BeNumerically("==", 1)))
+		Expect(kwebMock.lastCreateClusterParams).NotTo(HaveKey("cluster_type"))
+	})
+
+	It("forwards kcli VM hints to kweb params", func() {
+		spec := map[string]interface{}{
+			"service_type": "vm",
+			"metadata":     map[string]interface{}{"name": "hint-net-vm"},
+			"guest_os":     map[string]interface{}{"type": "fedora-39"},
+			"provider_hints": map[string]interface{}{
+				"kcli": map[string]interface{}{"nets": []string{"default", "lab-net"}},
+			},
+		}
+		body := map[string]interface{}{"spec": spec}
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(string(b)))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(201))
+		Expect(kwebMock.lastCreateVMParams).To(HaveKey("nets"))
+		Expect(kwebMock.lastCreateVMParams).NotTo(HaveKey("profile"))
 	})
 
 	It("rejects unsupported cluster type with 400", func() {

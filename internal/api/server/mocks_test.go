@@ -28,13 +28,18 @@ type mockKweb struct {
 	deleteClusterErr        error
 	deleteClusterCalled     bool
 	lastCreateVMName        string
+	lastCreateVMParams      map[string]interface{}
+	lastCreateClusterName   string
+	lastCreateClusterType   string
+	lastCreateClusterParams map[string]interface{}
 	healthResult            bool
 }
 
-func (m *mockKweb) CreateVM(_ context.Context, name string, _ string, _ map[string]interface{}) error {
+func (m *mockKweb) CreateVM(_ context.Context, name string, _ string, params map[string]interface{}) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.lastCreateVMName = name
+	m.lastCreateVMParams = params
 	return m.createVMErr
 }
 
@@ -66,9 +71,12 @@ func (m *mockKweb) DeleteVM(_ context.Context, _ string) error {
 	return m.deleteVMErr
 }
 
-func (m *mockKweb) CreateCluster(_ context.Context, _, _ string, _ map[string]interface{}) error {
+func (m *mockKweb) CreateCluster(_ context.Context, name, clusterType string, params map[string]interface{}) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.lastCreateClusterName = name
+	m.lastCreateClusterType = clusterType
+	m.lastCreateClusterParams = params
 	return m.createClusterErr
 }
 

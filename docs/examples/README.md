@@ -14,7 +14,17 @@ DCM administrator after the stack is running.
 
 All commands target the DCM API gateway (default `:9080`).
 
-### 1. Catalog items
+### 1. Traefik routes
+
+The DCM api-gateway compose ships routes for core services but does **not**
+include routes for individual service providers or the placement-manager's
+`/resources` endpoint (used by the DCM UI "Resources" tab).
+
+Copy the snippets from [`traefik-kcli-routes.yml`](traefik-kcli-routes.yml)
+into the gateway's `config/dynamic/routes.yml`. Traefik watches this file and
+reloads automatically — no restart needed.
+
+### 2. Catalog items
 
 Catalog items define what users can provision through the DCM UI.
 
@@ -30,12 +40,11 @@ curl -X POST http://localhost:9080/api/v1alpha1/catalog-items \
   -d @catalog-item-cluster.json
 ```
 
-### 2. Routing policy
+### 3. Routing policy
 
-The policy tells the placement manager which provider to use. The example
-below unconditionally routes all requests to `kcli-vm`. In production you
-would use Rego logic to select providers based on labels, regions, or
-capacity.
+The policy tells the placement manager which provider to use for each
+`service_type`. The example routes VM requests to `kcli-vm` and cluster
+requests to `kcli-cluster`:
 
 ```bash
 curl -X POST http://localhost:9080/api/v1alpha1/policies \
@@ -43,12 +52,17 @@ curl -X POST http://localhost:9080/api/v1alpha1/policies \
   -d @policy-route-to-kcli.json
 ```
 
-### 3. Create a VM through the full DCM flow
+> **Important:** Use a single policy with conditional Rego rules (one `main`
+> per `service_type`). Creating separate policies at the same priority causes
+> Rego evaluation conflicts.
 
-Once the catalog item and policy exist, create an instance:
+### 4. Create resources through the full DCM flow
+
+Once catalog items and policy exist, create instances:
 
 ```bash
-curl -X POST "http://localhost:9080/api/v1alpha1/catalog-item-instances?id=my-vm" \
+# Create a VM instance
+curl -X POST "http://localhost:9080/api/v1alpha1/catalog-item-instances" \
   -H "Content-Type: application/json" \
   -d '{
     "api_version": "v1alpha1",
@@ -62,6 +76,20 @@ curl -X POST "http://localhost:9080/api/v1alpha1/catalog-item-instances?id=my-vm
       ]
     }
   }'
+
+# Create a k3s cluster instance
+curl -X POST "http://localhost:9080/api/v1alpha1/catalog-item-instances" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "api_version": "v1alpha1",
+    "display_name": "My k3s Cluster",
+    "spec": {
+      "catalog_item_id": "<uid from catalog-item-cluster response>",
+      "user_values": [
+        {"path": "cluster_type", "value": "k3s"}
+      ]
+    }
+  }'
 ```
 
 In the full DCM flow, SPM sends `POST {endpoint}?id=<uuid>` with a
@@ -70,7 +98,7 @@ typically absent (catalog-manager does not include it unless the catalog
 item defines a `metadata.name` field). The SP derives the kcli resource
 name from the `?id=` parameter when `metadata.name` is missing.
 
-### 4. Direct SP API calls (without the DCM control plane)
+### 5. Direct SP API calls (without the DCM control plane)
 
 You can also call the kcli SP directly, bypassing catalog/placement/policy.
 The `?id=` query parameter is optional — if omitted, the SP generates a UUID.
@@ -102,7 +130,7 @@ curl -X POST "http://localhost:8080/api/v1alpha1/vms?id=my-catalog-vm" \
     }
   }'
 
-# Create a k3s cluster (cluster_type via provider_hints)
+# Create a k3s cluster (cluster_type and image via provider_hints)
 curl -X POST "http://localhost:8080/api/v1alpha1/clusters?id=my-cluster-id" \
   -H "Content-Type: application/json" \
   -d '{
@@ -114,19 +142,31 @@ curl -X POST "http://localhost:8080/api/v1alpha1/clusters?id=my-cluster-id" \
         "workers": {"count": 2}
       },
       "provider_hints": {
-        "kcli": {"cluster_type": "k3s"}
+        "kcli": {
+          "cluster_type": "k3s",
+          "image": "fedora41"
+        }
       }
     }
   }'
 ```
 
+> **Note:** The `provider_hints.kcli` map is forwarded as-is to kweb's
+> cluster/VM creation API. Use it to pass any kcli-specific parameter
+> (e.g. `image`, `nets`, `disk_size`). The keys `cluster_type` (clusters)
+> and `profile` (VMs) are excluded since they are handled separately.
+
 ## Customization
 
 - **OS images**: Edit the `enum` list in `catalog-item-vm.json` to match the
   images available on your kweb host (`curl http://<kweb>/vmprofiles`).
+  When creating clusters, the default image is `centos9stream` — pass
+  `"image": "<available-image>"` in `provider_hints.kcli` to override.
 - **Provider name**: If you changed `PROVIDER_NAME_VM` or
   `PROVIDER_NAME_CLUSTER`, update the `selected_provider` value in the
   policy accordingly.
 - **Conditional routing**: Replace the simple Rego rule with logic that
   inspects `input.spec` fields to route different workloads to different
   providers.
+- **Traefik service URL**: Update `http://kcli-sp:8080` in the routes file
+  to match your SP's actual listen address.
