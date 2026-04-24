@@ -386,7 +386,7 @@ components:
         ip:
           type: string
           readOnly: true
-          description: IP address of the VM (populated when RUNNING)
+          description: IP address of the VM (when available from kweb)
         ssh_user:
           type: string
           readOnly: true
@@ -450,11 +450,11 @@ components:
         kubeconfig:
           type: string
           readOnly: true
-          description: Base64-encoded kubeconfig for cluster access (populated when RUNNING)
+          description: Base64-encoded kubeconfig for cluster access (populated when READY)
         api_endpoint:
           type: string
           readOnly: true
-          description: Kubernetes API endpoint URL (populated when RUNNING)
+          description: Kubernetes API endpoint URL (populated when READY)
         spec:
           $ref: '#/components/schemas/ClusterSpec'
 

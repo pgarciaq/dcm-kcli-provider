@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -511,7 +512,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("returns only DCM-managed clusters, not external kweb clusters", func() {
-		storeMock.Put(store.ResourceEntry{ID: "cl-1", KcliName: "dcm-cl1", Type: "cluster", Status: "ACTIVE"})
+		storeMock.Put(store.ResourceEntry{ID: "cl-1", KcliName: "dcm-cl1", Type: "cluster", Status: "READY"})
 		kwebMock.listClustersResult = []kweb.ClusterInfo{
 			{Name: "dcm-cl1", Status: "active"},
 			{Name: "external-cluster", Status: "active"},
@@ -529,9 +530,9 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("paginates cluster list with max_page_size and next_page_token", func() {
-		storeMock.Put(store.ResourceEntry{ID: "cl-1", KcliName: "dcm-cl1", Type: "cluster", Status: "ACTIVE"})
-		storeMock.Put(store.ResourceEntry{ID: "cl-2", KcliName: "dcm-cl2", Type: "cluster", Status: "ACTIVE"})
-		storeMock.Put(store.ResourceEntry{ID: "cl-3", KcliName: "dcm-cl3", Type: "cluster", Status: "ACTIVE"})
+		storeMock.Put(store.ResourceEntry{ID: "cl-1", KcliName: "dcm-cl1", Type: "cluster", Status: "READY"})
+		storeMock.Put(store.ResourceEntry{ID: "cl-2", KcliName: "dcm-cl2", Type: "cluster", Status: "READY"})
+		storeMock.Put(store.ResourceEntry{ID: "cl-3", KcliName: "dcm-cl3", Type: "cluster", Status: "READY"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters?max_page_size=1", nil)
 		w := httptest.NewRecorder()
@@ -546,7 +547,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("returns cluster with id, status, path, and spec with user-facing name", func() {
-		storeMock.Put(store.ResourceEntry{ID: "cl-get", KcliName: "dcm-myedge", Type: "cluster", Status: "ACTIVE"})
+		storeMock.Put(store.ResourceEntry{ID: "cl-get", KcliName: "dcm-myedge", Type: "cluster", Status: "READY"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/cl-get", nil)
 		w := httptest.NewRecorder()
@@ -575,7 +576,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("deletes cluster, publishes DELETED event, removes from store", func() {
-		storeMock.Put(store.ResourceEntry{ID: "cl-del", KcliName: "dcm-delcl", Type: "cluster", Status: "ACTIVE"})
+		storeMock.Put(store.ResourceEntry{ID: "cl-del", KcliName: "dcm-delcl", Type: "cluster", Status: "READY"})
 
 		req := httptest.NewRequest(http.MethodDelete, "/api/v1alpha1/clusters/cl-del", nil)
 		w := httptest.NewRecorder()
@@ -947,10 +948,10 @@ var _ = Describe("Handlers", func() {
 		Expect(pd["detail"].(string)).To(ContainSubstring("already exists"))
 	})
 
-	It("ListVMs enriches IP from kweb data", func() {
+	It("ListVMs enriches IP and ssh_user from kweb data at top level", func() {
 		storeMock.Put(store.ResourceEntry{ID: "vm-enrich", KcliName: "dcm-enriched", Type: "vm", Status: "RUNNING"})
 		kwebMock.listVMsResult = []kweb.VMInfo{
-			{Name: "dcm-enriched", Status: "up", IP: "10.0.0.42"},
+			{Name: "dcm-enriched", Status: "up", IP: "10.0.0.42", User: "fedora"},
 		}
 
 		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms", nil)
@@ -962,6 +963,9 @@ var _ = Describe("Handlers", func() {
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		results := resp["results"].([]interface{})
 		Expect(results).To(HaveLen(1))
+		vm := results[0].(map[string]interface{})
+		Expect(vm["ip"]).To(Equal("10.0.0.42"))
+		Expect(vm["ssh_user"]).To(Equal("fedora"))
 	})
 
 	It("GetVM returns ip and ssh_user from kweb", func() {
@@ -979,8 +983,8 @@ var _ = Describe("Handlers", func() {
 		Expect(resp["ssh_user"]).To(Equal("fedora"))
 	})
 
-	It("GetCluster returns kubeconfig and api_endpoint when RUNNING", func() {
-		storeMock.Put(store.ResourceEntry{ID: "cl-kc", KcliName: "dcm-cl-kc", Type: "cluster", Status: "RUNNING"})
+	It("GetCluster returns kubeconfig and api_endpoint when READY", func() {
+		storeMock.Put(store.ResourceEntry{ID: "cl-kc", KcliName: "dcm-cl-kc", Type: "cluster", Status: "READY"})
 		kwebMock.getClusterResult = &kweb.ClusterInfo{Name: "dcm-cl-kc", Version: "1.30"}
 		kwebMock.getClusterKubeconfig = "apiVersion: v1\nclusters:\n- cluster:\n    server: https://10.0.0.1:6443\n  name: mycluster\nkind: Config\n"
 
@@ -995,7 +999,7 @@ var _ = Describe("Handlers", func() {
 		Expect(resp["api_endpoint"]).To(Equal("https://10.0.0.1:6443"))
 	})
 
-	It("GetCluster omits kubeconfig when not RUNNING", func() {
+	It("GetCluster omits kubeconfig when not READY", func() {
 		storeMock.Put(store.ResourceEntry{ID: "cl-creating", KcliName: "dcm-cl-creating", Type: "cluster", Status: "CREATING"})
 		kwebMock.getClusterResult = &kweb.ClusterInfo{Name: "dcm-cl-creating"}
 		kwebMock.getClusterKubeconfig = "should-not-appear"
@@ -1009,6 +1013,92 @@ var _ = Describe("Handlers", func() {
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		Expect(resp).NotTo(HaveKey("kubeconfig"))
 		Expect(resp).NotTo(HaveKey("api_endpoint"))
+	})
+
+	It("GetCluster omits kubeconfig when kubeconfig fetch fails", func() {
+		storeMock.Put(store.ResourceEntry{ID: "cl-kcerr", KcliName: "dcm-cl-kcerr", Type: "cluster", Status: "READY"})
+		kwebMock.getClusterResult = &kweb.ClusterInfo{Name: "dcm-cl-kcerr", Version: "1.30"}
+		kwebMock.getClusterKubeconfigErr = errors.New("kweb kubeconfig fetch failed")
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/cl-kcerr", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp).NotTo(HaveKey("kubeconfig"))
+		Expect(resp).NotTo(HaveKey("api_endpoint"))
+		spec := resp["spec"].(map[string]interface{})
+		Expect(spec["version"]).To(Equal("1.30"))
+	})
+
+	It("GetCluster returns valid base64 kubeconfig that round-trips", func() {
+		storeMock.Put(store.ResourceEntry{ID: "cl-b64", KcliName: "dcm-cl-b64", Type: "cluster", Status: "READY"})
+		kwebMock.getClusterResult = &kweb.ClusterInfo{Name: "dcm-cl-b64", Version: "1.30"}
+		rawKC := "apiVersion: v1\nclusters:\n- cluster:\n    server: https://10.0.0.1:6443\n  name: mycluster\ncontexts:\n- context:\n    cluster: mycluster\n  name: default\ncurrent-context: default\nkind: Config\n"
+		kwebMock.getClusterKubeconfig = rawKC
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/cl-b64", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+
+		encoded := resp["kubeconfig"].(string)
+		Expect(encoded).NotTo(BeEmpty())
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(string(decoded)).To(Equal(rawKC))
+	})
+
+	It("GetVM omits ip and ssh_user when kweb returns empty values", func() {
+		storeMock.Put(store.ResourceEntry{ID: "vm-empty", KcliName: "dcm-empty", Type: "vm", Status: "RUNNING"})
+		kwebMock.getVMResult = &kweb.VMInfo{Name: "dcm-empty", Status: "up", IP: "", User: ""}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms/vm-empty", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp).NotTo(HaveKey("ip"))
+		Expect(resp).NotTo(HaveKey("ssh_user"))
+	})
+
+	It("GetVM returns 200 with store-only data when kweb errors", func() {
+		storeMock.Put(store.ResourceEntry{ID: "vm-kwerr", KcliName: "dcm-kwerr", Type: "vm", Status: "RUNNING"})
+		kwebMock.getVMErr = errors.New("kweb connection refused")
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms/vm-kwerr", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["id"]).To(Equal("vm-kwerr"))
+		Expect(resp["status"]).To(Equal("RUNNING"))
+		Expect(resp).NotTo(HaveKey("ip"))
+		Expect(resp).NotTo(HaveKey("ssh_user"))
+	})
+
+	It("extractAPIEndpoint follows current-context for multi-cluster kubeconfig", func() {
+		storeMock.Put(store.ResourceEntry{ID: "cl-multi", KcliName: "dcm-cl-multi", Type: "cluster", Status: "READY"})
+		kwebMock.getClusterResult = &kweb.ClusterInfo{Name: "dcm-cl-multi", Version: "1.30"}
+		kwebMock.getClusterKubeconfig = "apiVersion: v1\nclusters:\n- cluster:\n    server: https://wrong.example.com:6443\n  name: other-cluster\n- cluster:\n    server: https://correct.example.com:6443\n  name: target-cluster\ncontexts:\n- context:\n    cluster: target-cluster\n  name: my-context\ncurrent-context: my-context\nkind: Config\n"
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/cl-multi", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["api_endpoint"]).To(Equal("https://correct.example.com:6443"))
 	})
 
 	It("ListVMs degrades gracefully on non-unreachable kweb error", func() {
@@ -1042,7 +1132,7 @@ var _ = Describe("Handlers", func() {
 	})
 
 	It("idempotent cluster create: returns existing resource when ?id= matches store entry", func() {
-		storeMock.Put(store.ResourceEntry{ID: "idem-cl-1", KcliName: "dcm-idem-cl-1", Type: "cluster", Status: "ACTIVE"})
+		storeMock.Put(store.ResourceEntry{ID: "idem-cl-1", KcliName: "dcm-idem-cl-1", Type: "cluster", Status: "READY"})
 		kwebMock.createClusterErr = errors.New("kweb should not be called")
 		body := clusterBody("idem-cl", withClusterType("k3s"))
 		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters?id=idem-cl-1", bytes.NewBufferString(body))
@@ -1053,7 +1143,7 @@ var _ = Describe("Handlers", func() {
 		var resp map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		Expect(resp["id"]).To(Equal("idem-cl-1"))
-		Expect(resp["status"]).To(Equal("ACTIVE"))
+		Expect(resp["status"]).To(Equal("READY"))
 	})
 
 	It("OpenAPI validation rejects ?id= with path-unsafe characters", func() {

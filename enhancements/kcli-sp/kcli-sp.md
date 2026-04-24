@@ -184,10 +184,10 @@ for one kcli backend. For environments with multiple backends (e.g. libvirt on
 one host, AWS in a cloud account), the admin deploys one kweb + SP pair per
 backend:
 
-| SP Instance | kweb Backend | Provider Name | Service Type |
-|---|---|---|---|
-| kcli SP #1 | kweb (libvirt on apollo) | `kcli-libvirt-apollo` | `vm`, `cluster` |
-| kcli SP #2 | kweb (AWS us-east) | `kcli-aws-useast` | `vm`, `cluster` |
+| SP Instance | kweb Backend | VM Provider Name | Cluster Provider Name | Service Types |
+|---|---|---|---|---|
+| kcli SP #1 | kweb (libvirt on apollo) | `kcli-libvirt-apollo-vm` | `kcli-libvirt-apollo-cluster` | `vm`, `cluster` |
+| kcli SP #2 | kweb (AWS us-east) | `kcli-aws-useast-vm` | `kcli-aws-useast-cluster` | `vm`, `cluster` |
 
 All instances register using the **standard** DCM service types (`vm`,
 `cluster`) — not provider-specific types. This preserves the SP abstraction
@@ -209,8 +209,14 @@ kweb.
 
 kweb's backend is determined by the kcli configuration on the host where kweb
 runs — either `~/.kcli/config.yml`, `~/.kcli/config.yaml`, or the `KCLI_CONFIG`
-environment variable. Without explicit configuration, kweb defaults to the local
-libvirt/KVM backend (requires libvirt to be running on the kweb host).
+environment variable. Without explicit configuration, kweb's default backend
+depends on the runtime environment: if local libvirt sockets exist
+(`/var/run/libvirt/libvirt-sock` etc.), it defaults to the **local libvirt/KVM**
+backend; if running inside a Kubernetes pod (detected via
+`KUBERNETES_SERVICE_HOST`), it defaults to **KubeVirt**; on macOS with Homebrew
+libvirt, it detects the Homebrew libvirt service; otherwise, kweb exits with an
+error. For cloud backends (AWS, vSphere, OpenStack, etc.), an explicit
+`~/.kcli/config.yml` with the appropriate `type` and credentials is required.
 
 The SP does **not** rely on kweb's `swagger.yml` for client generation due to
 known spec drift (see Risks). The relevant kweb endpoints are:
@@ -247,7 +253,7 @@ kweb returns JSON responses for most endpoints. The notable exception is
 `GET /kubes/{name}/kubeconfig`, which returns **raw kubeconfig text**
 (`text/plain`), not JSON. The SP consumes this endpoint internally — it is not
 proxied to DCM users. Instead, the SP follows the ACM Cluster SP pattern: when a
-cluster reaches `RUNNING` status, the SP fetches the kubeconfig from kweb,
+cluster reaches `READY` status, the SP fetches the kubeconfig from kweb,
 base64-encodes it, and embeds it in the `GET /clusters/{id}` response alongside
 an `api_endpoint` field extracted from the kubeconfig. This gives users
 everything they need to access their cluster from the standard DCM API.
@@ -730,7 +736,7 @@ Example response payload:
 {
   "id": "456e7890-e89b-12d3-a456-426614174001",
   "name": "edge-cluster",
-  "status": "ACTIVE",
+  "status": "READY",
   "nodes": "3",
   "version": "v1.30.2+k3s1"
 }
@@ -974,7 +980,7 @@ event.SetType("dcm.status.cluster")
 event.SetSubject("dcm.cluster")
 event.SetData(cloudevents.ApplicationJSON, ClusterStatus{
     Id:      "456e7890-e89b-12d3-a456-426614174001",
-    Status:  "ACTIVE",
+    Status:  "READY",
     Message: "Cluster is ready with 3 nodes",
 })
 ```
@@ -1014,13 +1020,14 @@ are tested and validated.
 
 #### Cluster Status Mapping
 
-The canonical cluster lifecycle phases are: `CREATING`, `ACTIVE`, `UPDATING`,
-`DEGRADED`, `DELETED`.
+The canonical cluster lifecycle phases are: `CREATING`, `READY`, `UPDATING`,
+`DEGRADED`, `DELETED`. This aligns with the ACM Cluster SP, which uses `READY`
+for operational clusters.
 
 | DCM Status | kweb Cluster Condition                        | Description                  |
 | ---------- | --------------------------------------------- | ---------------------------- |
 | CREATING   | Recently created, no nodes ready              | Cluster is being provisioned |
-| ACTIVE     | Nodes and version present in status           | Cluster is operational       |
+| READY      | Nodes and version present in status           | Cluster is operational       |
 | DEGRADED   | Partial node readiness                        | Some nodes unhealthy         |
 | ERROR      | Still CREATING after `CLUSTER_CREATE_TIMEOUT` | Creation failed or timed out |
 | DELETED    | Not found in kweb                             | Cluster has been deleted     |
@@ -1281,9 +1288,10 @@ On downgrade:
   scalability guarantees of the KubeVirt and ACM providers.
 
 - **Backend-specific status mapping:** kweb returns different status strings per
-  backend. The SP normalizes all known status strings to DCM vocabulary
-  (`RUNNING`, `STOPPED`, `PROVISIONING`, `ERROR`) and maps unknown values to
-  `ERROR`.
+  backend. The SP normalizes all known status strings to DCM vocabulary — for
+  VMs: `RUNNING`, `STOPPED`, `PROVISIONING`, `ERROR`, `PAUSED`, `STOPPING`,
+  `DELETING`, `DELETED`; for clusters: `CREATING`, `READY`, `ERROR`, `DELETED`
+  (aligned with the ACM Cluster SP). Unknown values are mapped to `ERROR`.
 
 ## Alternatives
 
@@ -1319,9 +1327,9 @@ results.
   HTTP client.
 - **Subprocess overhead.** Each DCM operation spawns a Python process, adding
   latency and resource consumption.
-- **Only remaining option.** kcli previously offered a gRPC API, but it was
-  deprecated in favor of the kweb REST API. CLI wrapping is the only
-  non-HTTP integration path.
+- **Only remaining option.** According to the kcli maintainer (Karim Boumedhel),
+  kcli previously offered a gRPC API, but it was deprecated in favor of the
+  kweb REST API. CLI wrapping is the only non-HTTP integration path.
 
 #### Status
 

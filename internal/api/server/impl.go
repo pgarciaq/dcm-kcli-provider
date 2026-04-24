@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/google/uuid"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
@@ -309,9 +309,12 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 	results := make([]VM, 0, len(storeVMs))
 	for _, entry := range storeVMs {
 		vm := entryToVM(entry)
-		if kvm, ok := kwebMap[entry.KcliName]; ok && kvm.IP != "" {
-			vm.Spec.AdditionalProperties = map[string]interface{}{
-				"ip": kvm.IP,
+		if kvm, ok := kwebMap[entry.KcliName]; ok {
+			if kvm.IP != "" {
+				vm.Ip = &kvm.IP
+			}
+			if kvm.User != "" {
+				vm.SshUser = &kvm.User
 			}
 		}
 		results = append(results, vm)
@@ -353,7 +356,9 @@ func (s *StrictServerImpl) GetVM(ctx context.Context, req GetVMRequestObject) (G
 	resp := entryToVM(*entry)
 
 	kvm, err := s.kweb.GetVM(ctx, entry.KcliName)
-	if err == nil {
+	if err != nil {
+		s.logger.Warn("kweb GetVM failed, returning store-only data", "vm", entry.KcliName, "error", err)
+	} else {
 		if kvm.IP != "" {
 			resp.Ip = &kvm.IP
 		}
@@ -563,13 +568,17 @@ func (s *StrictServerImpl) GetCluster(ctx context.Context, req GetClusterRequest
 	resp := entryToCluster(*entry)
 
 	kc, err := s.kweb.GetCluster(ctx, entry.KcliName)
-	if err == nil && kc.Version != "" {
+	if err != nil {
+		s.logger.Warn("kweb GetCluster failed, returning store-only data", "cluster", entry.KcliName, "error", err)
+	} else if kc.Version != "" {
 		resp.Spec.Version = &kc.Version
 	}
 
-	if entry.Status == "RUNNING" {
+	if entry.Status == "READY" {
 		raw, kcErr := s.kweb.GetClusterKubeconfig(ctx, entry.KcliName)
-		if kcErr == nil && raw != "" {
+		if kcErr != nil {
+			s.logger.Warn("kweb GetClusterKubeconfig failed, omitting kubeconfig", "cluster", entry.KcliName, "error", kcErr)
+		} else if raw != "" {
 			encoded := base64.StdEncoding.EncodeToString([]byte(raw))
 			resp.Kubeconfig = &encoded
 			if ep := extractAPIEndpoint(raw); ep != "" {
@@ -626,11 +635,21 @@ func (s *StrictServerImpl) DeleteCluster(ctx context.Context, req DeleteClusterR
 
 // --- Helpers ---
 
-// extractAPIEndpoint parses a kubeconfig YAML and returns the first
-// cluster's server URL, or empty string if parsing fails.
+// extractAPIEndpoint parses a kubeconfig YAML, follows current-context
+// to resolve the correct cluster, and returns its server URL.
+// Falls back to the first cluster entry if current-context is unset or
+// the referenced cluster is not found.
 func extractAPIEndpoint(kubeconfig string) string {
 	var kc struct {
+		CurrentContext string `yaml:"current-context"`
+		Contexts       []struct {
+			Name    string `yaml:"name"`
+			Context struct {
+				Cluster string `yaml:"cluster"`
+			} `yaml:"context"`
+		} `yaml:"contexts"`
 		Clusters []struct {
+			Name    string `yaml:"name"`
 			Cluster struct {
 				Server string `yaml:"server"`
 			} `yaml:"cluster"`
@@ -639,6 +658,21 @@ func extractAPIEndpoint(kubeconfig string) string {
 	if err := yaml.Unmarshal([]byte(kubeconfig), &kc); err != nil {
 		return ""
 	}
+
+	targetCluster := ""
+	for _, ctx := range kc.Contexts {
+		if ctx.Name == kc.CurrentContext {
+			targetCluster = ctx.Context.Cluster
+			break
+		}
+	}
+
+	for _, cl := range kc.Clusters {
+		if cl.Name == targetCluster {
+			return cl.Cluster.Server
+		}
+	}
+
 	if len(kc.Clusters) > 0 {
 		return kc.Clusters[0].Cluster.Server
 	}

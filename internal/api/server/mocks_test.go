@@ -18,6 +18,7 @@ type mockKweb struct {
 	listVMsErr              error
 	listVMsResult           []kweb.VMInfo
 	getVMResult             *kweb.VMInfo
+	getVMErr                error
 	deleteVMErr             error
 	deleteVMCalled          bool
 	listClustersResult      []kweb.ClusterInfo
@@ -49,6 +50,9 @@ func (m *mockKweb) ListVMs(_ context.Context) ([]kweb.VMInfo, error) {
 func (m *mockKweb) GetVM(_ context.Context, name string) (*kweb.VMInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.getVMErr != nil {
+		return nil, m.getVMErr
+	}
 	if m.getVMResult != nil {
 		return m.getVMResult, nil
 	}

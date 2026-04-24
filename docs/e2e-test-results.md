@@ -144,7 +144,7 @@ walkthrough including customization options.
 | Test | Expected | Actual | Status |
 |---|---|---|---|
 | Create k3s cluster | 201, status=CREATING | `201 {"id":"...","name":"e2e-k3s","status":"CREATING"}` | PASS |
-| Cluster transitions to ACTIVE | Status changes after kweb creates cluster | Status=ACTIVE | PASS |
+| Cluster transitions to READY | Status changes after kweb creates cluster | Status=READY | PASS |
 | List clusters | Returns managed clusters | 200 with `results` array | PASS |
 | Get cluster (live kweb data) | Returns cluster with version | 200, version="N/A" (kweb returns N/A for new clusters) | PASS |
 | Create cluster with invalid type "kind" | 400 Bad Request | `400` with OpenAPI enum validation | PASS |

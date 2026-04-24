@@ -301,7 +301,8 @@ func (c *Client) doGet(ctx context.Context, path string) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := io.ReadAll(resp.Body)
+	const maxResponseSize = 10 << 20 // 10 MB
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return nil, err
 	}

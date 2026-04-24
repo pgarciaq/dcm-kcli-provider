@@ -29,7 +29,7 @@ func MapVMStatus(kwebStatus string, createdAt time.Time) string {
 
 func MapClusterStatus(hasNodes bool, createdAt time.Time, clusterCreateTimeout time.Duration) string {
 	if hasNodes {
-		return "ACTIVE"
+		return "READY"
 	}
 	if time.Since(createdAt) > clusterCreateTimeout {
 		return "ERROR"
