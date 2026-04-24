@@ -12,20 +12,22 @@ import (
 )
 
 type mockKweb struct {
-	mu                  sync.Mutex
-	createVMErr         error
-	createClusterErr    error
-	listVMsErr          error
-	listVMsResult       []kweb.VMInfo
-	getVMResult         *kweb.VMInfo
-	deleteVMErr         error
-	deleteVMCalled      bool
-	listClustersResult  []kweb.ClusterInfo
-	getClusterResult    *kweb.ClusterInfo
-	deleteClusterErr    error
-	deleteClusterCalled bool
-	lastCreateVMName    string
-	healthResult        bool
+	mu                      sync.Mutex
+	createVMErr             error
+	createClusterErr        error
+	listVMsErr              error
+	listVMsResult           []kweb.VMInfo
+	getVMResult             *kweb.VMInfo
+	deleteVMErr             error
+	deleteVMCalled          bool
+	listClustersResult      []kweb.ClusterInfo
+	getClusterResult        *kweb.ClusterInfo
+	getClusterKubeconfig    string
+	getClusterKubeconfigErr error
+	deleteClusterErr        error
+	deleteClusterCalled     bool
+	lastCreateVMName        string
+	healthResult            bool
 }
 
 func (m *mockKweb) CreateVM(_ context.Context, name string, _ string, _ map[string]interface{}) error {
@@ -79,6 +81,12 @@ func (m *mockKweb) GetCluster(_ context.Context, name string) (*kweb.ClusterInfo
 		return m.getClusterResult, nil
 	}
 	return &kweb.ClusterInfo{Name: name}, nil
+}
+
+func (m *mockKweb) GetClusterKubeconfig(_ context.Context, _ string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.getClusterKubeconfig, m.getClusterKubeconfigErr
 }
 
 func (m *mockKweb) DeleteCluster(_ context.Context, _ string) error {

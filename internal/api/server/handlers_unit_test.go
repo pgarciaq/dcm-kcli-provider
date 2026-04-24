@@ -962,9 +962,53 @@ var _ = Describe("Handlers", func() {
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		results := resp["results"].([]interface{})
 		Expect(results).To(HaveLen(1))
-		vm := results[0].(map[string]interface{})
-		spec := vm["spec"].(map[string]interface{})
-		Expect(spec["ip"]).To(Equal("10.0.0.42"))
+	})
+
+	It("GetVM returns ip and ssh_user from kweb", func() {
+		storeMock.Put(store.ResourceEntry{ID: "vm-access", KcliName: "dcm-access", Type: "vm", Status: "RUNNING"})
+		kwebMock.getVMResult = &kweb.VMInfo{Name: "dcm-access", Status: "up", IP: "192.168.1.10", User: "fedora"}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/vms/vm-access", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["ip"]).To(Equal("192.168.1.10"))
+		Expect(resp["ssh_user"]).To(Equal("fedora"))
+	})
+
+	It("GetCluster returns kubeconfig and api_endpoint when RUNNING", func() {
+		storeMock.Put(store.ResourceEntry{ID: "cl-kc", KcliName: "dcm-cl-kc", Type: "cluster", Status: "RUNNING"})
+		kwebMock.getClusterResult = &kweb.ClusterInfo{Name: "dcm-cl-kc", Version: "1.30"}
+		kwebMock.getClusterKubeconfig = "apiVersion: v1\nclusters:\n- cluster:\n    server: https://10.0.0.1:6443\n  name: mycluster\nkind: Config\n"
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/cl-kc", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp["kubeconfig"]).NotTo(BeEmpty())
+		Expect(resp["api_endpoint"]).To(Equal("https://10.0.0.1:6443"))
+	})
+
+	It("GetCluster omits kubeconfig when not RUNNING", func() {
+		storeMock.Put(store.ResourceEntry{ID: "cl-creating", KcliName: "dcm-cl-creating", Type: "cluster", Status: "CREATING"})
+		kwebMock.getClusterResult = &kweb.ClusterInfo{Name: "dcm-cl-creating"}
+		kwebMock.getClusterKubeconfig = "should-not-appear"
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/clusters/cl-creating", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(200))
+		var resp map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &resp)
+		Expect(resp).NotTo(HaveKey("kubeconfig"))
+		Expect(resp).NotTo(HaveKey("api_endpoint"))
 	})
 
 	It("ListVMs degrades gracefully on non-unreachable kweb error", func() {

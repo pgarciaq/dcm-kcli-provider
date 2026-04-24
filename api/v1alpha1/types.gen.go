@@ -84,7 +84,12 @@ type Access struct {
 
 // Cluster Kubernetes cluster resource
 type Cluster struct {
-	Id *string `json:"id,omitempty"`
+	// ApiEndpoint Kubernetes API endpoint URL (populated when RUNNING)
+	ApiEndpoint *string `json:"api_endpoint,omitempty"`
+	Id          *string `json:"id,omitempty"`
+
+	// Kubeconfig Base64-encoded kubeconfig for cluster access (populated when RUNNING)
+	Kubeconfig *string `json:"kubeconfig,omitempty"`
 
 	// Path Resource path (e.g. clusters/{id})
 	Path *string `json:"path,omitempty"`
@@ -188,12 +193,18 @@ type Storage struct {
 type VM struct {
 	Id *string `json:"id,omitempty"`
 
+	// Ip IP address of the VM (populated when RUNNING)
+	Ip *string `json:"ip,omitempty"`
+
 	// Path Resource path (e.g. vms/{id})
 	Path *string `json:"path,omitempty"`
 
 	// Spec Provider-agnostic VM specification aligned with the DCM catalog VMSpec
-	Spec   VMSpec  `json:"spec"`
-	Status *string `json:"status,omitempty"`
+	Spec VMSpec `json:"spec"`
+
+	// SshUser Default SSH user for the VM (e.g. fedora, core, centos)
+	SshUser *string `json:"ssh_user,omitempty"`
+	Status  *string `json:"status,omitempty"`
 }
 
 // VMList defines model for VMList.

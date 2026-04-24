@@ -9,6 +9,10 @@ machines and Kubernetes clusters through
 workloads, use the [KubeVirt SP](https://github.com/dcm-project/kubevirt-service-provider)
 or [ACM Cluster SP](https://github.com/dcm-project/acm-cluster-service-provider).
 
+> **This service provider is not intended for production use.** kweb has no
+> authentication, no TLS, no rate limiting, and no SLA guarantees. The kcli SP
+> inherits these limitations.
+
 ## Status
 
 **Working prototype.** The provider implements VM and Cluster lifecycle
@@ -111,10 +115,9 @@ docker compose up --build
 
 ### Releasing
 
-Images will be pushed to `quay.io/dcm-project/dcm-kcli-provider`.
-See [Releasing](https://github.com/dcm-project/shared-workflows#release-flow)
-in shared-workflows for the full release process, tag behavior, and version
-conventions.
+Container images are pushed to
+[`quay.io/pgarciaq/dcm-kcli-provider`](https://quay.io/repository/pgarciaq/dcm-kcli-provider)
+on every push to `main` and on version tags (`v*`).
 
 ## License
 

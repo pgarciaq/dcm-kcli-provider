@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/google/uuid"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
@@ -27,6 +30,7 @@ type KwebClient interface {
 	CreateCluster(ctx context.Context, name, clusterType string, params map[string]interface{}) error
 	ListClusters(ctx context.Context) ([]kweb.ClusterInfo, error)
 	GetCluster(ctx context.Context, name string) (*kweb.ClusterInfo, error)
+	GetClusterKubeconfig(ctx context.Context, name string) (string, error)
 	DeleteCluster(ctx context.Context, name string) error
 	CheckHealth(ctx context.Context) (bool, error)
 }
@@ -349,9 +353,12 @@ func (s *StrictServerImpl) GetVM(ctx context.Context, req GetVMRequestObject) (G
 	resp := entryToVM(*entry)
 
 	kvm, err := s.kweb.GetVM(ctx, entry.KcliName)
-	if err == nil && kvm.IP != "" {
-		resp.Spec.AdditionalProperties = map[string]interface{}{
-			"ip": kvm.IP,
+	if err == nil {
+		if kvm.IP != "" {
+			resp.Ip = &kvm.IP
+		}
+		if kvm.User != "" {
+			resp.SshUser = &kvm.User
 		}
 	}
 
@@ -560,6 +567,17 @@ func (s *StrictServerImpl) GetCluster(ctx context.Context, req GetClusterRequest
 		resp.Spec.Version = &kc.Version
 	}
 
+	if entry.Status == "RUNNING" {
+		raw, kcErr := s.kweb.GetClusterKubeconfig(ctx, entry.KcliName)
+		if kcErr == nil && raw != "" {
+			encoded := base64.StdEncoding.EncodeToString([]byte(raw))
+			resp.Kubeconfig = &encoded
+			if ep := extractAPIEndpoint(raw); ep != "" {
+				resp.ApiEndpoint = &ep
+			}
+		}
+	}
+
 	return GetCluster200JSONResponse(resp), nil
 }
 
@@ -607,6 +625,25 @@ func (s *StrictServerImpl) DeleteCluster(ctx context.Context, req DeleteClusterR
 }
 
 // --- Helpers ---
+
+// extractAPIEndpoint parses a kubeconfig YAML and returns the first
+// cluster's server URL, or empty string if parsing fails.
+func extractAPIEndpoint(kubeconfig string) string {
+	var kc struct {
+		Clusters []struct {
+			Cluster struct {
+				Server string `yaml:"server"`
+			} `yaml:"cluster"`
+		} `yaml:"clusters"`
+	}
+	if err := yaml.Unmarshal([]byte(kubeconfig), &kc); err != nil {
+		return ""
+	}
+	if len(kc.Clusters) > 0 {
+		return kc.Clusters[0].Cluster.Server
+	}
+	return ""
+}
 
 func resolveID(clientID *string) string {
 	if clientID != nil && *clientID != "" {

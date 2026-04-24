@@ -216,6 +216,14 @@ func (c *Client) GetCluster(ctx context.Context, name string) (*ClusterInfo, err
 	return cl, nil
 }
 
+func (c *Client) GetClusterKubeconfig(ctx context.Context, name string) (string, error) {
+	data, err := c.doGet(ctx, "/kubes/"+url.PathEscape(name)+"/kubeconfig")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
 func (c *Client) DeleteCluster(ctx context.Context, name string) error {
 	return c.doDelete(ctx, "/kubes/"+url.PathEscape(name))
 }

@@ -383,6 +383,14 @@ components:
           type: string
           readOnly: true
           description: Resource path (e.g. vms/{id})
+        ip:
+          type: string
+          readOnly: true
+          description: IP address of the VM (populated when RUNNING)
+        ssh_user:
+          type: string
+          readOnly: true
+          description: Default SSH user for the VM (e.g. fedora, core, centos)
         spec:
           $ref: '#/components/schemas/VMSpec'
 
@@ -439,6 +447,14 @@ components:
           type: string
           readOnly: true
           description: Resource path (e.g. clusters/{id})
+        kubeconfig:
+          type: string
+          readOnly: true
+          description: Base64-encoded kubeconfig for cluster access (populated when RUNNING)
+        api_endpoint:
+          type: string
+          readOnly: true
+          description: Kubernetes API endpoint URL (populated when RUNNING)
         spec:
           $ref: '#/components/schemas/ClusterSpec'
 
