@@ -13,6 +13,38 @@
           "type": "string",
           "enum": ["k3s", "openshift", "microshift"]
         }
+      },
+      {
+        "path": "provider_hints.kcli.image",
+        "display_name": "Node OS Image",
+        "default": "fedora41",
+        "editable": true,
+        "validation_schema": {
+          "type": "string",
+          "enum": ["fedora41", "centos9stream", "ubuntu2404"]
+        }
+      },
+      {
+        "path": "nodes.control_plane.count",
+        "display_name": "Control Plane Nodes",
+        "default": 1,
+        "editable": true,
+        "validation_schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        }
+      },
+      {
+        "path": "nodes.workers.count",
+        "display_name": "Worker Nodes",
+        "default": 1,
+        "editable": true,
+        "validation_schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
       }
     ]
   }
