@@ -525,7 +525,7 @@ var _ = Describe("Handlers", func() {
 		}
 		body := map[string]interface{}{"spec": spec}
 		b, _ := json.Marshal(body)
-		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBufferString(string(b)))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms", bytes.NewBuffer(b))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
