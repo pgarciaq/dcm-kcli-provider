@@ -117,7 +117,7 @@ docker compose up --build
 
 Container images are pushed to
 [`quay.io/pgarciaq/dcm-kcli-provider`](https://quay.io/repository/pgarciaq/dcm-kcli-provider)
-on every push to `main` and on version tags (`v*`).
+on version tags (`v*`). Manual builds can be triggered via `workflow_dispatch`.
 
 ## License
 
