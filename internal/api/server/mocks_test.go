@@ -166,6 +166,18 @@ func (m *mockStore) Delete(id string) error {
 	return nil
 }
 
+func (m *mockStore) UpdateStatus(id, newStatus string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.entries[id]
+	if !ok {
+		return store.ErrNotFound
+	}
+	e.Status = newStatus
+	m.entries[id] = e
+	return nil
+}
+
 func (m *mockStore) ResolveKcliName(dcmID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

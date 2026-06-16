@@ -450,11 +450,11 @@ components:
         kubeconfig:
           type: string
           readOnly: true
-          description: Base64-encoded kubeconfig for cluster access (populated when READY)
+          description: Base64-encoded kubeconfig for cluster access (populated when ACTIVE)
         api_endpoint:
           type: string
           readOnly: true
-          description: Kubernetes API endpoint URL (populated when READY)
+          description: Kubernetes API endpoint URL (populated when ACTIVE)
         spec:
           $ref: '#/components/schemas/ClusterSpec'
 

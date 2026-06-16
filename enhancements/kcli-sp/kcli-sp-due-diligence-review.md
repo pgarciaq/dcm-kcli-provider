@@ -10,8 +10,12 @@ and peer SP proposals (KubeVirt, K8s Container).
 **Severity summary:** 2 Critical, 6 High, 12 Medium, 5 Low, 1 Info — 26
 findings total.
 
-> **Note:** All findings from this review have been addressed in the
-> enhanced proposal (commit `a119447`). This document is preserved as an
+> **Note:** All 26 findings from this review have been addressed. The
+> initial round was addressed in the enhanced proposal (commit `a119447`,
+> 2026-04-22). The remaining code fixes — root `/health` endpoint, cluster
+> status `READY` → `ACTIVE`, `DELETING` intermediate state, expanded VM
+> status mapping for non-libvirt backends, and all TPL/OPS/DES/SEC proposal
+> updates — were applied on 2026-06-17. This document is preserved as an
 > audit trail.
 
 > **Scope update (2026-04-22):** The proposal has been rescoped to

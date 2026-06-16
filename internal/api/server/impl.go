@@ -41,6 +41,7 @@ type StateStore interface {
 	Get(id string) (*store.ResourceEntry, error)
 	List(resourceType string) ([]store.ResourceEntry, error)
 	Delete(id string) error
+	UpdateStatus(id, newStatus string) error
 	ResolveKcliName(dcmID string) (string, error)
 }
 
@@ -391,7 +392,10 @@ func (s *StrictServerImpl) DeleteVM(ctx context.Context, req DeleteVMRequestObje
 	}
 
 	kcliName := entry.KcliName
+	_ = s.store.UpdateStatus(vmID, "DELETING")
+
 	if err := s.kweb.DeleteVM(ctx, kcliName); err != nil {
+		_ = s.store.UpdateStatus(vmID, entry.Status)
 		if errors.Is(err, kweb.ErrKwebUnreachable) {
 			return DeleteVMdefaultApplicationProblemPlusJSONResponse{
 				Body:       problemError(502, "kweb is unreachable"),
@@ -577,7 +581,7 @@ func (s *StrictServerImpl) GetCluster(ctx context.Context, req GetClusterRequest
 		resp.Spec.Version = &kc.Version
 	}
 
-	if entry.Status == "READY" {
+	if entry.Status == "ACTIVE" {
 		raw, kcErr := s.kweb.GetClusterKubeconfig(ctx, entry.KcliName)
 		if kcErr != nil {
 			s.logger.Warn("kweb GetClusterKubeconfig failed, omitting kubeconfig", "cluster", entry.KcliName, "error", kcErr)
@@ -613,7 +617,10 @@ func (s *StrictServerImpl) DeleteCluster(ctx context.Context, req DeleteClusterR
 	}
 
 	kcliName := entry.KcliName
+	_ = s.store.UpdateStatus(clusterID, "DELETING")
+
 	if err := s.kweb.DeleteCluster(ctx, kcliName); err != nil {
+		_ = s.store.UpdateStatus(clusterID, entry.Status)
 		if errors.Is(err, kweb.ErrKwebUnreachable) {
 			return DeleteClusterdefaultApplicationProblemPlusJSONResponse{
 				Body:       problemError(502, "kweb is unreachable"),

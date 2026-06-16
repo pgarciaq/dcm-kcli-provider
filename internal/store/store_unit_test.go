@@ -73,7 +73,7 @@ var _ = Describe("Store", func() {
 	It("lists only entries matching resource type", func() {
 		now := time.Now().UTC()
 		Expect(s.Put(store.ResourceEntry{ID: "vm-1", KcliName: "dcm-vm1", Type: "vm", Status: "RUNNING", CreatedAt: now})).To(Succeed())
-		Expect(s.Put(store.ResourceEntry{ID: "cl-1", KcliName: "dcm-cl1", Type: "cluster", Status: "READY", CreatedAt: now})).To(Succeed())
+		Expect(s.Put(store.ResourceEntry{ID: "cl-1", KcliName: "dcm-cl1", Type: "cluster", Status: "ACTIVE", CreatedAt: now})).To(Succeed())
 		Expect(s.Put(store.ResourceEntry{ID: "vm-2", KcliName: "dcm-vm2", Type: "vm", Status: "STOPPED", CreatedAt: now})).To(Succeed())
 
 		vms, err := s.List("vm")
@@ -109,7 +109,7 @@ var _ = Describe("Store", func() {
 	It("lists entries filtered by type and status", func() {
 		now := time.Now().UTC()
 		Expect(s.Put(store.ResourceEntry{ID: "c1", KcliName: "dcm-c1", Type: "cluster", Status: "CREATING", CreatedAt: now})).To(Succeed())
-		Expect(s.Put(store.ResourceEntry{ID: "c2", KcliName: "dcm-c2", Type: "cluster", Status: "READY", CreatedAt: now})).To(Succeed())
+		Expect(s.Put(store.ResourceEntry{ID: "c2", KcliName: "dcm-c2", Type: "cluster", Status: "ACTIVE", CreatedAt: now})).To(Succeed())
 		Expect(s.Put(store.ResourceEntry{ID: "c3", KcliName: "dcm-c3", Type: "cluster", Status: "CREATING", CreatedAt: now})).To(Succeed())
 		Expect(s.Put(store.ResourceEntry{ID: "v1", KcliName: "dcm-v1", Type: "vm", Status: "CREATING", CreatedAt: now})).To(Succeed())
 
@@ -121,7 +121,7 @@ var _ = Describe("Store", func() {
 			Expect(e.Status).To(Equal("CREATING"))
 		}
 
-		active, err := s.ListByStatus("cluster", "READY")
+		active, err := s.ListByStatus("cluster", "ACTIVE")
 		Expect(err).NotTo(HaveOccurred())
 		Expect(active).To(HaveLen(1))
 		Expect(active[0].ID).To(Equal("c2"))

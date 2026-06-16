@@ -253,7 +253,7 @@ kweb returns JSON responses for most endpoints. The notable exception is
 `GET /kubes/{name}/kubeconfig`, which returns **raw kubeconfig text**
 (`text/plain`), not JSON. The SP consumes this endpoint internally — it is not
 proxied to DCM users. Instead, the SP follows the ACM Cluster SP pattern: when a
-cluster reaches `READY` status, the SP fetches the kubeconfig from kweb,
+cluster reaches `ACTIVE` status, the SP fetches the kubeconfig from kweb,
 base64-encodes it, and embeds it in the `GET /clusters/{id}` response alongside
 an `api_endpoint` field extracted from the kubeconfig. This gives users
 everything they need to access their cluster from the standard DCM API.
@@ -307,8 +307,8 @@ DCM control plane to poll every 10 seconds. The health check verifies:
 
 The response body follows the format defined in the
 [SP Health Check](https://github.com/dcm-project/enhancements/blob/main/enhancements/service-provider-health-check/service-provider-health-check.md)
-enhancement. The `status` field uses `"pass"` (not `"healthy"`) per the
-contract.
+enhancement. The `status` field uses `"healthy"`/`"unhealthy"` per the
+three-state health model adopted by the DCM control plane.
 
 #### DCM SP Status Reporting
 
@@ -332,12 +332,24 @@ Provider identity and instance identifiers are carried in the CloudEvent
 envelope attributes (`source`, `subject`), not in the NATS subject. This keeps
 routing simple and aligns with the canonical contract.
 
+**CloudEvent type format:** The SP uses `dcm.status.vm` and
+`dcm.status.cluster` as the CloudEvent `type` attribute. This follows the
+pattern `dcm.status.{serviceType}`, which is the most semantically clear
+format: it identifies the event as a DCM status update for a specific service
+type. Alternative patterns exist in the ecosystem (e.g.
+`dcm.providers.{providerName}.status.update`), but the service-type-based
+format is preferred because consumers subscribe by service type, not by
+provider name.
+
 ### Registration Flow
 
 The kcli SP must successfully register with DCM for each service type it
 provides. During startup, after the HTTP server is ready, the SP uses the DCM
-registration client to send two requests to the SP API registration endpoint:
-`POST /api/v1alpha1/providers`.
+registration client library to send two registration requests to the Service
+Provider Manager. The registration endpoint version is determined by the SPM
+client library (currently `POST /api/v1/providers` per the SPM API). The SP
+does not hardcode the API version — it uses the configured `SPM_URL` and the
+generated SPM client.
 
 See DCM
 [registration flow](https://github.com/dcm-project/enhancements/blob/main/enhancements/sp-registration-flow/sp-registration-flow.md)
@@ -727,8 +739,16 @@ the same pagination contract as the VM list endpoint.
 #### GET /api/v1alpha1/clusters/{clusterId}
 
 Returns cluster status. The SP calls `GET /kubes/{name}` on kweb and maps the
-response to the DCM cluster schema. If the cluster is ready, the kubeconfig is
-also available via `GET /kubes/{name}/kubeconfig` on kweb.
+response to the DCM cluster schema. If the cluster is `ACTIVE`, the kubeconfig
+is also available via `GET /kubes/{name}/kubeconfig` on kweb. The kubeconfig is
+base64-encoded and embedded in the response `kubeconfig` field, alongside an
+`api_endpoint` field extracted from the kubeconfig YAML. This follows the ACM
+Cluster SP pattern of returning credentials inline rather than via a dedicated
+endpoint.
+
+> **Note:** A dedicated `GET /api/v1alpha1/clusters/{id}/kubeconfig` endpoint
+> is deferred to v2. In v1, the kubeconfig is available through the standard
+> `GET /clusters/{id}` response when the cluster is `ACTIVE`.
 
 Example response payload:
 
@@ -736,7 +756,7 @@ Example response payload:
 {
   "id": "456e7890-e89b-12d3-a456-426614174001",
   "name": "edge-cluster",
-  "status": "READY",
+  "status": "ACTIVE",
   "nodes": "3",
   "version": "v1.30.2+k3s1"
 }
@@ -781,7 +801,7 @@ The SP probes kweb's `GET /host` endpoint to verify backend connectivity.
 
 ```json
 {
-  "status": "pass",
+  "status": "healthy",
   "version": "0.1.0",
   "uptime": 3600
 }
@@ -791,7 +811,7 @@ The SP probes kweb's `GET /host` endpoint to verify backend connectivity.
 
 ```json
 {
-  "status": "fail",
+  "status": "unhealthy",
   "version": "0.1.0",
   "uptime": 3600,
   "message": "kweb unreachable at http://kweb:9000"
@@ -897,6 +917,14 @@ shorter intervals increase load on kweb but reduce status reporting latency. At
 homelab scale (tens of resources), the default interval imposes negligible load
 on kweb.
 
+**Scalability bounds:** Each poll cycle calls `GET /vms` and `GET /kubes` on
+kweb, which returns all resources with enriched info. The recommended maximum
+is **~200 VMs and ~50 clusters** per SP instance. Beyond this, the poll cycle
+may not complete within the poll interval, leading to stale status and
+increased kweb load. If larger scale is needed, deploy multiple SP instances
+partitioned by backend (one kweb + SP pair per hypervisor host or cloud
+account).
+
 #### Debounce Logic
 
 To avoid flooding the messaging system during rapid status oscillation (as
@@ -934,6 +962,19 @@ are logged as orphans (created outside DCM or from a lost store).
 the tracked resources from DCM and re-create them (or manually re-associate
 them). This is an acceptable trade-off for the simplicity of a single-file
 embedded store.
+
+**Backup recommendations:**
+
+- **Containerized deployments:** Mount `STATE_STORE_PATH` on a persistent
+  volume. The volume survives container restarts and image upgrades.
+- **Bare-metal / systemd:** Use a stable path (e.g. `/var/lib/dcm-kcli-provider/state.db`)
+  on a filesystem with journaling (ext4, XFS). Periodic snapshots (`cp state.db
+  state.db.bak`) provide point-in-time recovery.
+- **CI/CD:** Treat the store as ephemeral. Each test run starts with a fresh
+  store. No backup needed.
+- **Multi-replica:** Not supported in v1. The bbolt store is process-local and
+  does not support concurrent access from multiple binaries. Externalizing the
+  store (PostgreSQL, etcd) is deferred until horizontal scaling is needed.
 
 #### CloudEvents Format
 
@@ -980,8 +1021,8 @@ event.SetType("dcm.status.cluster")
 event.SetSubject("dcm.cluster")
 event.SetData(cloudevents.ApplicationJSON, ClusterStatus{
     Id:      "456e7890-e89b-12d3-a456-426614174001",
-    Status:  "READY",
-    Message: "Cluster is ready with 3 nodes",
+    Status:  "ACTIVE",
+    Message: "Cluster is active with 3 nodes",
 })
 ```
 
@@ -1020,14 +1061,16 @@ are tested and validated.
 
 #### Cluster Status Mapping
 
-The canonical cluster lifecycle phases are: `CREATING`, `READY`, `UPDATING`,
-`DEGRADED`, `DELETED`. This aligns with the ACM Cluster SP, which uses `READY`
-for operational clusters.
+The canonical cluster lifecycle phases are: `CREATING`, `ACTIVE`, `UPDATING`,
+`DEGRADED`, `DELETED`. The kcli SP uses `ACTIVE` for operational clusters,
+aligning with the canonical status-reporting enhancement. (Note: the ACM
+Cluster SP historically uses `READY`; the kcli SP follows the canonical
+specification.)
 
 | DCM Status | kweb Cluster Condition                        | Description                  |
 | ---------- | --------------------------------------------- | ---------------------------- |
 | CREATING   | Recently created, no nodes ready              | Cluster is being provisioned |
-| READY      | Nodes and version present in status           | Cluster is operational       |
+| ACTIVE     | Nodes and version present in status           | Cluster is operational       |
 | DEGRADED   | Partial node readiness                        | Some nodes unhealthy         |
 | ERROR      | Still CREATING after `CLUSTER_CREATE_TIMEOUT` | Creation failed or timed out |
 | DELETED    | Not found in kweb                             | Cluster has been deleted     |
@@ -1059,7 +1102,7 @@ for the intended use case — a developer's workstation or a personal server. Fo
 deployments on shared or untrusted networks, kweb should be placed behind a
 reverse proxy (Nginx, Caddy, etc.) with authentication enabled.
 
-#### kweb Credential Exposure
+#### kweb Credential Exposure (SEC-02)
 
 **Risk:** kweb's `GET /kubes/{name}/kubeconfig` returns raw cluster-admin
 kubeconfigs without authentication. The `/vmconsole/{name}` endpoint returns
@@ -1072,6 +1115,41 @@ ACM SP pattern), but does not proxy the raw kweb endpoint. For VMs, the SP
 returns IP address and default SSH user — no passwords or private keys are
 exposed. Console/VNC access via a dedicated endpoint is deferred to v2.
 
+#### kweb Command Injection Surface (SEC-03)
+
+**Risk:** kweb's `/vmconsole/{name}` handler uses `os.popen` to launch
+`websockify`, with arguments derived from provider metadata. If an attacker
+controls the VM name or console parameters, this could enable command injection.
+
+**Mitigation:** The kcli SP **does not expose a console proxy endpoint** in v1.
+No SP code path triggers the vulnerable `vmconsole` handler. All VM and cluster
+names sent to kweb are OpenAPI-validated (pattern
+`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$`) and prefixed with `dcm-`.
+Additionally, the kweb client uses `url.PathEscape` on all resource names. If a
+console proxy is added in a future version, input sanitization must be
+reviewed before exposing this code path.
+
+#### VNC/SPICE Password Exposure (SEC-04)
+
+**Risk:** kweb's `/vmconsole/{name}` endpoint returns VNC/SPICE passwords in
+the JSON response. Combined with kweb's lack of authentication, this exposes
+console credentials to any network client.
+
+**Mitigation:** Not relevant to v1 (no console proxy). This is an upstream
+kweb limitation. Adding a console proxy endpoint to the kcli SP is blocked
+until kweb either adds authentication or the SP implements its own auth
+middleware (see SEC-01).
+
+#### Open Redirect in kweb vmconsole (SEC-05)
+
+**Risk:** kweb's `/vmconsole/{name}` handler issues an HTTP redirect to the
+console URL for non-VNC/SPICE console types. If the console URL is
+attacker-influenced, this constitutes a classic open redirect vulnerability.
+
+**Mitigation:** Not relevant to v1 (no console proxy). Reinforces the
+requirement that kweb must be network-isolated and that console functionality
+must not be exposed without additional security controls.
+
 #### kweb Concurrency Limitations
 
 **Risk:** kweb's cluster creation handler spawns unbounded Python threads (one
@@ -1079,9 +1157,14 @@ per `POST /kubes` request). Concurrent operations may conflict on shared kcli
 configuration files.
 
 **Mitigation:** At homelab scale (a handful of concurrent operations), this is
-unlikely to cause issues. The SP still serializes cluster creation operations as
-a defensive measure, but this is an implementation detail rather than a critical
-safeguard.
+unlikely to cause issues. The SP implements two defensive measures:
+
+1. **Cluster creation serialization:** A `sync.Mutex` (`createMu`) serializes
+   `POST /kubes` calls to kweb, preventing concurrent cluster creates from
+   conflicting on shared kcli config state.
+2. **Client-side rate limiting:** The kweb HTTP client enforces a rate limit of
+   10 requests/second with a burst of 20 (`golang.org/x/time/rate`). This
+   prevents accidental request storms from overwhelming kweb.
 
 #### kweb Error Response Inconsistency
 
@@ -1185,7 +1268,7 @@ were audited and intentionally deferred:
 | Profile validation when cache is empty                               | When the profile cache has not yet populated (e.g. kweb unreachable on first poll), `CreateVM` allows any profile through. This is acceptable because kweb itself rejects unknown profiles with an error that the SP already maps to HTTP 400. Adding a hard block would make VMs uncreatable during the first poll interval even when kweb is healthy.                                                                              |
 | RFC 7807 `instance` field not set on handler errors                  | The `StrictServerInterface` pattern does not expose the HTTP request path to handler methods. Setting `instance` would require passing it through context or a middleware. The `type`, `title`, `status`, and `detail` fields are all present and correct.                                                                                                                                                                           |
 | TC-REG-IT-001 / TC-REG-IT-002 (integration-level registration tests) | These test that `/health` stays 200 while SPM registration fails or context is cancelled mid-retry. The registrar has 12 unit specs covering retry, backoff, non-retryable errors, context cancellation, and idempotent `StartBackground`. The lifecycle test `TC-LIFE-UT-001` validates the full startup→registration→shutdown flow with real `Server` wiring. Adding a dedicated integration test would provide marginal coverage. |
-| `DEGRADED` cluster status                                            | The proposal defines a `DEGRADED` status for clusters with partial node readiness. kweb's `GET /kubes/{name}` does not expose per-node health; it only returns a node list and a version string. Without upstream kweb support, this cannot be reliably implemented. If kweb adds health data, the monitor's `deriveClusterStatus` can be extended.                                                                                  |
+| `DEGRADED` cluster status                                            | The proposal defines a `DEGRADED` status for clusters with partial node readiness. kweb's `GET /kubes/{name}` does not expose per-node health; it only returns a node list and a version string. Without upstream kweb support, this cannot be reliably implemented. If kweb adds health data, the monitor's `MapClusterStatus` can be extended.                                                                                  |
 
 #### Known limitations
 
@@ -1263,6 +1346,20 @@ On downgrade:
   logged instead of silently swallowed. Added structured logger to handler
   layer.
 
+- 2026-06-17: Addressed all 26 adversarial review findings. Code changes:
+  (1) root `/health` endpoint exposed outside `/api/v1alpha1` prefix for DCM
+  control plane probing; (2) cluster status changed from `READY` to `ACTIVE`
+  per canonical status-reporting spec; (3) `DELETING` intermediate state set
+  before kweb delete calls with rollback on failure; (4) VM status mapping
+  expanded for non-libvirt backends (`suspended`, `shutoff`, `running`,
+  `stopping`, `powering-off`, `fault`). Proposal updates: registration API
+  version clarified (SPM client library, not hardcoded); state store backup
+  recommendations added; polling scalability bounds documented (~200 VMs, ~50
+  clusters); kweb concurrency safeguards (createMu + rate limiter) documented;
+  CloudEvent type format rationale added; kubeconfig endpoint deferred to v2;
+  kweb security risks (SEC-03/04/05: os.popen, VNC passwords, open redirect)
+  documented; health status values corrected to `healthy`/`unhealthy`.
+
 ## Drawbacks
 
 - **Polling instead of watching:** Unlike Kubernetes-based SPs that use
@@ -1290,7 +1387,7 @@ On downgrade:
 - **Backend-specific status mapping:** kweb returns different status strings per
   backend. The SP normalizes all known status strings to DCM vocabulary — for
   VMs: `RUNNING`, `STOPPED`, `PROVISIONING`, `ERROR`, `PAUSED`, `STOPPING`,
-  `DELETING`, `DELETED`; for clusters: `CREATING`, `READY`, `ERROR`, `DELETED`
+  `DELETING`, `DELETED`; for clusters: `CREATING`, `ACTIVE`, `ERROR`, `DELETED`
   (aligned with the ACM Cluster SP). Unknown values are mapped to `ERROR`.
 
 ## Alternatives

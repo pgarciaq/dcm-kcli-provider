@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -42,12 +43,14 @@ type Server struct {
 	monitor    *monitor.Monitor
 	registrars []*registration.Registrar
 	listener   net.Listener
+	startedAt  time.Time
 }
 
 func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	s := &Server{
-		cfg:    cfg,
-		logger: logger,
+		cfg:       cfg,
+		logger:    logger,
+		startedAt: time.Now(),
 	}
 
 	var err error
@@ -160,6 +163,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	root := http.NewServeMux()
 	root.Handle("/metrics", promhttp.Handler())
+	root.HandleFunc("/health", s.rootHealthHandler)
 	root.Handle("/", r)
 
 	s.httpServer = &http.Server{
@@ -256,7 +260,7 @@ func (s *Server) selfProbe(ctx context.Context) bool {
 		if ctx.Err() != nil {
 			return false
 		}
-		resp, err := client.Get(fmt.Sprintf("http://%s/api/v1alpha1/health", addr))
+		resp, err := client.Get(fmt.Sprintf("http://%s/health", addr))
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -273,6 +277,36 @@ func (s *Server) Addr() string {
 		return s.listener.Addr().String()
 	}
 	return ""
+}
+
+func (s *Server) rootHealthHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	uptime := float32(time.Since(s.startedAt).Seconds())
+
+	type healthResp struct {
+		Status  string  `json:"status"`
+		Version string  `json:"version"`
+		Uptime  float32 `json:"uptime"`
+		Message string  `json:"message,omitempty"`
+	}
+
+	resp := healthResp{Version: version, Uptime: uptime}
+
+	healthy, err := s.kwebClient.CheckHealth(ctx)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil || !healthy {
+		msg := "kweb unreachable"
+		if err != nil {
+			msg = err.Error()
+		}
+		resp.Status = "unhealthy"
+		resp.Message = msg
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else {
+		resp.Status = "healthy"
+		w.WriteHeader(http.StatusOK)
+	}
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func run() error {

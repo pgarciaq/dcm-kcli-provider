@@ -9,18 +9,18 @@ const provisioningThreshold = 10 * time.Minute
 
 func MapVMStatus(kwebStatus string, createdAt time.Time) string {
 	switch strings.ToLower(kwebStatus) {
-	case "up":
+	case "up", "running":
 		return "RUNNING"
-	case "down":
+	case "down", "shutoff":
 		if time.Since(createdAt) < provisioningThreshold {
 			return "PROVISIONING"
 		}
 		return "STOPPED"
-	case "paused":
+	case "paused", "suspended":
 		return "PAUSED"
-	case "error", "crashed", "nostate":
+	case "error", "crashed", "nostate", "fault":
 		return "ERROR"
-	case "shuttingdown":
+	case "shuttingdown", "stopping", "powering-off":
 		return "STOPPING"
 	default:
 		return "ERROR"
@@ -29,7 +29,7 @@ func MapVMStatus(kwebStatus string, createdAt time.Time) string {
 
 func MapClusterStatus(hasNodes bool, createdAt time.Time, clusterCreateTimeout time.Duration) string {
 	if hasNodes {
-		return "READY"
+		return "ACTIVE"
 	}
 	if time.Since(createdAt) > clusterCreateTimeout {
 		return "ERROR"

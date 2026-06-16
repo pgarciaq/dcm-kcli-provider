@@ -86,7 +86,7 @@ var _ = Describe("Events Publisher", func() {
 	It("publishes cluster event with correct subject and fields", func() {
 		evt := events.StatusEvent{
 			ID:      "456",
-			Status:  "READY",
+			Status:  "ACTIVE",
 			Message: "Cluster is ready",
 		}
 		err := pub.PublishClusterEvent(ctx, evt)
@@ -95,7 +95,7 @@ var _ = Describe("Events Publisher", func() {
 		all := pub.allEvents()
 		Expect(all).To(HaveLen(1))
 		Expect(all[0].Subject).To(Equal(events.ClusterSubject))
-		Expect(all[0].Event.Status).To(Equal("READY"))
+		Expect(all[0].Event.Status).To(Equal("ACTIVE"))
 		Expect(all[0].Event.Message).To(Equal("Cluster is ready"))
 	})
 
@@ -142,7 +142,7 @@ var _ = Describe("Events Publisher", func() {
 		var p events.ConnectedPublisher = &events.NoopPublisher{}
 		Expect(p.IsConnected()).To(BeTrue())
 		Expect(p.PublishVMEvent(ctx, events.StatusEvent{ID: "n", Status: "RUNNING"})).To(Succeed())
-		Expect(p.PublishClusterEvent(ctx, events.StatusEvent{ID: "c", Status: "READY"})).To(Succeed())
+		Expect(p.PublishClusterEvent(ctx, events.StatusEvent{ID: "c", Status: "ACTIVE"})).To(Succeed())
 	})
 
 	// TC-EVT-UT-002: NATSPublisher with nil connection is not connected and publish wraps NotConnectedError
@@ -155,7 +155,7 @@ var _ = Describe("Events Publisher", func() {
 		var nc *events.NotConnectedError
 		Expect(errors.As(err, &nc)).To(BeTrue())
 
-		err = pub.PublishClusterEvent(ctx, events.StatusEvent{ID: "y", Status: "READY"})
+		err = pub.PublishClusterEvent(ctx, events.StatusEvent{ID: "y", Status: "ACTIVE"})
 		Expect(err).To(HaveOccurred())
 		var nc2 *events.NotConnectedError
 		Expect(errors.As(err, &nc2)).To(BeTrue())

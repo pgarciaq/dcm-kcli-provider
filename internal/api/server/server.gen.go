@@ -91,11 +91,11 @@ type Access struct {
 
 // Cluster Kubernetes cluster resource
 type Cluster struct {
-	// ApiEndpoint Kubernetes API endpoint URL (populated when READY)
+	// ApiEndpoint Kubernetes API endpoint URL (populated when ACTIVE)
 	ApiEndpoint *string `json:"api_endpoint,omitempty"`
 	Id          *string `json:"id,omitempty"`
 
-	// Kubeconfig Base64-encoded kubeconfig for cluster access (populated when READY)
+	// Kubeconfig Base64-encoded kubeconfig for cluster access (populated when ACTIVE)
 	Kubeconfig *string `json:"kubeconfig,omitempty"`
 
 	// Path Resource path (e.g. clusters/{id})
