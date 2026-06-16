@@ -20,9 +20,12 @@ var errNonRetryable = errors.New("non-retryable")
 type ProviderConfig struct {
 	ID            string
 	Name          string
+	DisplayName   string
 	Endpoint      string
 	ServiceType   string
 	SchemaVersion string
+	Operations    []string
+	Metadata      map[string]interface{}
 }
 
 type Option func(*Registrar)
@@ -127,6 +130,16 @@ func (r *Registrar) register(ctx context.Context) error {
 		Endpoint:      r.providerCfg.Endpoint,
 		ServiceType:   r.providerCfg.ServiceType,
 		SchemaVersion: r.providerCfg.SchemaVersion,
+	}
+	if r.providerCfg.DisplayName != "" {
+		provider.DisplayName = &r.providerCfg.DisplayName
+	}
+	if len(r.providerCfg.Operations) > 0 {
+		provider.Operations = &r.providerCfg.Operations
+	}
+	if len(r.providerCfg.Metadata) > 0 {
+		md := spmv1alpha1.ProviderMetadata{AdditionalProperties: r.providerCfg.Metadata}
+		provider.Metadata = &md
 	}
 
 	resp, err := r.client.CreateProviderWithResponse(ctx, params, provider)

@@ -405,9 +405,10 @@ func (s *StrictServerImpl) DeleteVM(ctx context.Context, req DeleteVMRequestObje
 	}
 
 	_ = s.publisher.PublishVMEvent(ctx, events.StatusEvent{
-		ID:      vmID,
-		Status:  "DELETED",
-		Message: fmt.Sprintf("VM %s deleted", kcliName),
+		ID:        vmID,
+		Status:    "DELETED",
+		Message:   fmt.Sprintf("VM %s deleted", kcliName),
+		Timestamp: time.Now().UTC(),
 	})
 	_ = s.store.Delete(vmID)
 
@@ -626,9 +627,10 @@ func (s *StrictServerImpl) DeleteCluster(ctx context.Context, req DeleteClusterR
 	}
 
 	_ = s.publisher.PublishClusterEvent(ctx, events.StatusEvent{
-		ID:      clusterID,
-		Status:  "DELETED",
-		Message: fmt.Sprintf("Cluster %s deleted", kcliName),
+		ID:        clusterID,
+		Status:    "DELETED",
+		Message:   fmt.Sprintf("Cluster %s deleted", kcliName),
+		Timestamp: time.Now().UTC(),
 	})
 	_ = s.store.Delete(clusterID)
 

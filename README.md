@@ -56,6 +56,7 @@ The SP exposes an OpenAPI 3.0 API under `/api/v1alpha1`. The full spec is in
 | GET | /api/v1alpha1/health | SP health check |
 | GET | /api/v1alpha1/vms/health | VM service health (used by SPM) |
 | GET | /api/v1alpha1/clusters/health | Cluster service health (used by SPM) |
+| GET | /metrics | Prometheus metrics |
 
 ### Request Format
 

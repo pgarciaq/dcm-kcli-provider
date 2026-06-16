@@ -17,6 +17,8 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	apiv1alpha1 "github.com/pgarciaq/dcm-kcli-provider/api/v1alpha1"
 	apiserver "github.com/pgarciaq/dcm-kcli-provider/internal/api/server"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/config"
@@ -87,9 +89,15 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	vmProviderCfg := registration.ProviderConfig{
 		ID:            cfg.ProviderIDVM,
 		Name:          cfg.ProviderNameVM,
+		DisplayName:   "kcli Virtual Machines",
 		Endpoint:      fmt.Sprintf("http://%s%s%s", cfg.ListenAddress, baseURL, vmSuffix),
 		ServiceType:   "vm",
 		SchemaVersion: cfg.SchemaVersion,
+		Operations:    []string{"create", "delete", "get", "list"},
+		Metadata: map[string]interface{}{
+			"backend":  "libvirt",
+			"kweb_url": cfg.KwebURL,
+		},
 	}
 	if vmProviderCfg.ID == "" {
 		vmProviderCfg.ID = uuid.New().String()
@@ -103,9 +111,15 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	clusterProviderCfg := registration.ProviderConfig{
 		ID:            cfg.ProviderIDCluster,
 		Name:          cfg.ProviderNameCluster,
+		DisplayName:   "kcli Kubernetes Clusters",
 		Endpoint:      fmt.Sprintf("http://%s%s%s", cfg.ListenAddress, baseURL, clusterSuffix),
 		ServiceType:   "cluster",
 		SchemaVersion: cfg.SchemaVersion,
+		Operations:    []string{"create", "delete", "get", "list"},
+		Metadata: map[string]interface{}{
+			"backend":  "libvirt",
+			"kweb_url": cfg.KwebURL,
+		},
 	}
 	if clusterProviderCfg.ID == "" {
 		clusterProviderCfg.ID = uuid.New().String()
@@ -144,8 +158,12 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	apiserver.HandlerFromMuxWithBaseURL(strictHandler, r, serverBaseURL)
 
+	root := http.NewServeMux()
+	root.Handle("/metrics", promhttp.Handler())
+	root.Handle("/", r)
+
 	s.httpServer = &http.Server{
-		Handler:      r,
+		Handler:      root,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
 		IdleTimeout:  cfg.IdleTimeout,
@@ -272,7 +290,7 @@ func run() error {
 	case "error":
 		level = slog.LevelError
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
 
 	srv, err := NewServer(cfg, logger)
 	if err != nil {

@@ -124,6 +124,67 @@ var _ = Describe("Lifecycle", func() {
 		_ = stateStore.Close()
 	})
 
+	It("serves Prometheus metrics on /metrics", func() {
+		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/host":
+				w.WriteHeader(http.StatusOK)
+			case "/vmprofiles":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"profiles": map[string]interface{}{}})
+			case "/vms":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"vms": []interface{}{}})
+			case "/kubes":
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"kubes": map[string]interface{}{}})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		defer kwebServer.Close()
+
+		spmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"id": "test-id", "name": "kcli-vm"})
+		}))
+		defer spmServer.Close()
+
+		cfg := &config.Config{
+			ListenAddress:        freePort(),
+			KwebURL:              kwebServer.URL,
+			SPMURL:               spmServer.URL,
+			ProviderNameVM:       "kcli-vm",
+			ProviderNameCluster:  "kcli-cluster",
+			PollInterval:         24 * time.Hour,
+			DebounceWindow:       5 * time.Second,
+			StateStorePath:       filepath.Join(GinkgoT().TempDir(), "state.db"),
+			ShutdownTimeout:      10 * time.Second,
+			ReadTimeout:          15 * time.Second,
+			WriteTimeout:         60 * time.Second,
+			IdleTimeout:          60 * time.Second,
+			RequestTimeout:       45 * time.Second,
+			KwebTimeout:          5 * time.Second,
+			ClusterCreateTimeout: 30 * time.Minute,
+		}
+
+		logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		srv, err := NewServer(cfg, logger)
+		Expect(err).NotTo(HaveOccurred())
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() { _ = srv.Start(ctx) }()
+
+		client := &http.Client{Timeout: 2 * time.Second}
+		Eventually(func() int {
+			resp, err := client.Get(fmt.Sprintf("http://%s/metrics", srv.Addr()))
+			if err != nil {
+				return 0
+			}
+			_ = resp.Body.Close()
+			return resp.StatusCode
+		}).WithTimeout(5 * time.Second).WithPolling(100 * time.Millisecond).Should(Equal(200))
+	})
+
 	It("fetches and logs available VM profiles on startup", func() {
 		var profilesCalled atomic.Int32
 		kwebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

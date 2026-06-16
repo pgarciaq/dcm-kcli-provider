@@ -265,6 +265,65 @@ var _ = Describe("Registrar", func() {
 		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
 	})
 
+	It("sends display_name, operations, and metadata when configured", func() {
+		var receivedBody spmv1alpha1.Provider
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			json.NewDecoder(req.Body).Decode(&receivedBody)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
+		}))
+		defer server.Close()
+
+		cfg := registration.ProviderConfig{
+			ID:            validUUID,
+			Name:          "kcli-vm",
+			DisplayName:   "kcli Virtual Machines",
+			Endpoint:      "http://sp:8080/api/v1alpha1",
+			ServiceType:   "vm",
+			SchemaVersion: "v1alpha1",
+			Operations:    []string{"create", "delete", "get", "list"},
+			Metadata:      map[string]interface{}{"backend": "libvirt", "kweb_url": "http://kweb:8000"},
+		}
+
+		reg, err := registration.NewRegistrar(server.URL, cfg, logger)
+		Expect(err).NotTo(HaveOccurred())
+
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
+
+		Expect(receivedBody.DisplayName).NotTo(BeNil())
+		Expect(*receivedBody.DisplayName).To(Equal("kcli Virtual Machines"))
+		Expect(receivedBody.Operations).NotTo(BeNil())
+		Expect(*receivedBody.Operations).To(ConsistOf("create", "delete", "get", "list"))
+		Expect(receivedBody.Metadata).NotTo(BeNil())
+		backend, ok := receivedBody.Metadata.Get("backend")
+		Expect(ok).To(BeTrue())
+		Expect(backend).To(Equal("libvirt"))
+	})
+
+	It("omits display_name, operations, and metadata when not configured", func() {
+		var receivedRaw json.RawMessage
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			json.NewDecoder(req.Body).Decode(&receivedRaw)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(spmv1alpha1.Provider{Id: &validUUID, Name: "kcli-vm"})
+		}))
+		defer server.Close()
+
+		reg, err := registration.NewRegistrar(server.URL, providerCfg, logger)
+		Expect(err).NotTo(HaveOccurred())
+
+		reg.StartBackground(context.Background())
+		Eventually(reg.Done(), 3*time.Second).Should(BeClosed())
+
+		raw := string(receivedRaw)
+		Expect(raw).NotTo(ContainSubstring("display_name"))
+		Expect(raw).NotTo(ContainSubstring("operations"))
+		Expect(raw).NotTo(ContainSubstring("metadata"))
+	})
+
 	// 200 (update existing) is treated as success
 	It("treats 200 response as successful update", func() {
 		spm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

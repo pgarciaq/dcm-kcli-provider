@@ -206,9 +206,10 @@ func (m *Monitor) flushOne(id string) {
 	m.lastPublish[id] = time.Now()
 
 	evt := events.StatusEvent{
-		ID:      id,
-		Status:  pe.status,
-		Message: pe.message,
+		ID:        id,
+		Status:    pe.status,
+		Message:   pe.message,
+		Timestamp: time.Now().UTC(),
 	}
 
 	var err error
