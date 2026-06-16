@@ -2,6 +2,11 @@
 package metrics
 
 import (
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -11,14 +16,14 @@ var (
 		Namespace: "dcm_kcli",
 		Name:      "http_requests_total",
 		Help:      "Total HTTP requests by method, path, and status code.",
-	}, []string{"method", "path", "code"})
+	}, []string{"method", "route", "code"})
 
 	RequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "dcm_kcli",
 		Name:      "http_request_duration_seconds",
 		Help:      "HTTP request latency in seconds.",
 		Buckets:   prometheus.DefBuckets,
-	}, []string{"method", "path"})
+	}, []string{"method", "route"})
 
 	ResourcesManaged = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "dcm_kcli",
@@ -38,3 +43,42 @@ var (
 		Help:      "Total NATS CloudEvents published by type.",
 	}, []string{"event_type"})
 )
+
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.code = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// Middleware records HTTP request count and duration using chi's route pattern
+// to avoid label cardinality issues from dynamic path segments.
+func Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w, code: http.StatusOK}
+		next.ServeHTTP(sw, r)
+
+		route := chi.RouteContext(r.Context()).RoutePattern()
+		if route == "" {
+			route = r.URL.Path
+		}
+		method := r.Method
+		code := strconv.Itoa(sw.code)
+
+		RequestsTotal.WithLabelValues(method, route, code).Inc()
+		RequestDuration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
+	})
+}
+
+// RecordKweb records a kweb API call outcome.
+func RecordKweb(operation string, err error) {
+	result := "success"
+	if err != nil {
+		result = "error"
+	}
+	KwebRequestsTotal.WithLabelValues(operation, result).Inc()
+}

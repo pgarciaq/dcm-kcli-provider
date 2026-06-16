@@ -10,6 +10,8 @@ import (
 	cloudevents "github.com/cloudevents/sdk-go/v2/event"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
+
+	"github.com/pgarciaq/dcm-kcli-provider/internal/metrics"
 )
 
 // NotConnectedError is returned when a NATSPublisher publishes without a live connection.
@@ -69,14 +71,22 @@ func (p *NATSPublisher) PublishVMEvent(_ context.Context, event StatusEvent) err
 	if !p.IsConnected() {
 		return fmt.Errorf("publishing VM event: %w", &NotConnectedError{})
 	}
-	return p.publish(VMSubject, VMSource, VMEventType, event)
+	err := p.publish(VMSubject, VMSource, VMEventType, event)
+	if err == nil {
+		metrics.NATSEventsPublished.WithLabelValues(VMEventType).Inc()
+	}
+	return err
 }
 
 func (p *NATSPublisher) PublishClusterEvent(_ context.Context, event StatusEvent) error {
 	if !p.IsConnected() {
 		return fmt.Errorf("publishing cluster event: %w", &NotConnectedError{})
 	}
-	return p.publish(ClusterSubject, ClusterSource, ClusterEventType, event)
+	err := p.publish(ClusterSubject, ClusterSource, ClusterEventType, event)
+	if err == nil {
+		metrics.NATSEventsPublished.WithLabelValues(ClusterEventType).Inc()
+	}
+	return err
 }
 
 func (p *NATSPublisher) Close() {

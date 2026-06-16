@@ -14,6 +14,7 @@ require (
 	github.com/oapi-codegen/runtime v1.4.0
 	github.com/onsi/ginkgo/v2 v2.28.1
 	github.com/onsi/gomega v1.39.1
+	github.com/prometheus/client_golang v1.23.2
 	go.etcd.io/bbolt v1.4.3
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/time v0.15.0
@@ -45,7 +46,6 @@ require (
 	github.com/oasdiff/yaml v0.0.9 // indirect
 	github.com/oasdiff/yaml3 v0.0.9 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
-	github.com/prometheus/client_golang v1.23.2 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect

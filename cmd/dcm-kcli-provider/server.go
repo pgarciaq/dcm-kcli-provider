@@ -26,12 +26,13 @@ import (
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/handlers"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/kweb"
+	"github.com/pgarciaq/dcm-kcli-provider/internal/metrics"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/monitor"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/registration"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/store"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 type Server struct {
 	cfg        *config.Config
@@ -57,6 +58,20 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	s.store, err = store.New(cfg.StateStorePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening state store: %w", err)
+	}
+
+	if entries, err := s.store.ListAll(); err == nil {
+		var vms, clusters int
+		for _, e := range entries {
+			switch e.Type {
+			case "vm":
+				vms++
+			case "cluster":
+				clusters++
+			}
+		}
+		metrics.ResourcesManaged.WithLabelValues("vm").Add(float64(vms))
+		metrics.ResourcesManaged.WithLabelValues("cluster").Add(float64(clusters))
 	}
 
 	s.kwebClient = kweb.NewClient(cfg.KwebURL, cfg.KwebTimeout)
@@ -151,6 +166,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	r := chi.NewRouter()
 	r.Use(handlers.PanicRecovery(logger))
 	r.Use(middleware.Logger)
+	r.Use(metrics.Middleware)
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(nethttpmiddleware.OapiRequestValidatorWithOptions(swagger, &nethttpmiddleware.Options{
 		Options: openapi3filter.Options{

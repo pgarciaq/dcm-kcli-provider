@@ -11,6 +11,7 @@ import (
 
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/kweb"
+	"github.com/pgarciaq/dcm-kcli-provider/internal/metrics"
 )
 
 type Config struct {
@@ -38,6 +39,7 @@ type Monitor struct {
 	lastPublish   map[string]time.Time
 	pending       map[string]*pendingEvent
 	orphanCounter int
+	seenOrphans   map[string]bool
 }
 
 func New(kwebClient KwebClient, stateStore StateStore, pub events.Publisher, cfg Config, logger *slog.Logger) *Monitor {
@@ -49,6 +51,7 @@ func New(kwebClient KwebClient, stateStore StateStore, pub events.Publisher, cfg
 		logger:      logger,
 		lastPublish: make(map[string]time.Time),
 		pending:     make(map[string]*pendingEvent),
+		seenOrphans: make(map[string]bool),
 	}
 }
 
@@ -84,10 +87,10 @@ func (m *Monitor) Run(ctx context.Context) {
 
 func (m *Monitor) poll(ctx context.Context) {
 	m.refreshProfiles(ctx)
-	m.pollVMs(ctx)
+	kwebVMs := m.pollVMs(ctx)
 	m.pollClusters(ctx)
 	m.flushPending(ctx)
-	m.detectVMOrphans(ctx)
+	m.detectVMOrphans(kwebVMs)
 }
 
 func (m *Monitor) refreshProfiles(ctx context.Context) {
@@ -101,11 +104,11 @@ func (m *Monitor) refreshProfiles(ctx context.Context) {
 	m.mu.Unlock()
 }
 
-func (m *Monitor) pollVMs(ctx context.Context) {
+func (m *Monitor) pollVMs(ctx context.Context) []kweb.VMInfo {
 	kwebVMs, err := m.kweb.ListVMs(ctx)
 	if err != nil {
 		m.logger.Warn("failed to list VMs from kweb", "error", err)
-		return
+		return nil
 	}
 
 	kwebMap := make(map[string]kweb.VMInfo)
@@ -116,7 +119,7 @@ func (m *Monitor) pollVMs(ctx context.Context) {
 	storeVMs, err := m.store.List("vm")
 	if err != nil {
 		m.logger.Warn("failed to list VMs from store", "error", err)
-		return
+		return kwebVMs
 	}
 
 	for _, entry := range storeVMs {
@@ -125,6 +128,7 @@ func (m *Monitor) pollVMs(ctx context.Context) {
 			if entry.Status != "DELETED" && entry.Status != "DELETING" {
 				m.publishWithDebounce(ctx, entry.ID, "vm", "DELETED", fmt.Sprintf("VM %s no longer found in kweb", entry.KcliName))
 				_ = m.store.Delete(entry.ID)
+				metrics.ResourcesManaged.WithLabelValues("vm").Dec()
 			}
 			continue
 		}
@@ -135,6 +139,7 @@ func (m *Monitor) pollVMs(ctx context.Context) {
 			_ = m.store.UpdateStatus(entry.ID, newStatus)
 		}
 	}
+	return kwebVMs
 }
 
 func (m *Monitor) pollClusters(ctx context.Context) {
@@ -164,6 +169,7 @@ func (m *Monitor) pollClusters(ctx context.Context) {
 			} else if entry.Status != "DELETED" && entry.Status != "DELETING" && entry.Status != "CREATING" {
 				m.publishWithDebounce(ctx, entry.ID, "cluster", "DELETED", fmt.Sprintf("Cluster %s no longer found", entry.KcliName))
 				_ = m.store.Delete(entry.ID)
+				metrics.ResourcesManaged.WithLabelValues("cluster").Dec()
 			}
 			continue
 		}
@@ -227,10 +233,9 @@ func (m *Monitor) flushPending(_ context.Context) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for id, pe := range m.pending {
+	for id := range m.pending {
 		lastTime, exists := m.lastPublish[id]
 		if !exists || time.Since(lastTime) >= m.config.DebounceWindow {
-			_ = pe
 			m.flushOne(id)
 		}
 	}
@@ -240,11 +245,12 @@ func (m *Monitor) PollOnce(ctx context.Context) {
 	m.poll(ctx)
 }
 
-func (m *Monitor) detectVMOrphans(ctx context.Context) {
-	kwebVMs, err := m.kweb.ListVMs(ctx)
-	if err != nil {
+func (m *Monitor) detectVMOrphans(kwebVMs []kweb.VMInfo) {
+	if kwebVMs == nil {
 		return
 	}
+
+	currentOrphans := make(map[string]bool)
 
 	for _, vm := range kwebVMs {
 		if !strings.HasPrefix(vm.Name, "dcm-") {
@@ -252,10 +258,24 @@ func (m *Monitor) detectVMOrphans(ctx context.Context) {
 		}
 		_, err := m.store.FindByKcliName(vm.Name)
 		if err != nil {
+			currentOrphans[vm.Name] = true
 			m.mu.Lock()
-			m.orphanCounter++
-			m.mu.Unlock()
-			m.logger.Warn("orphan resource detected", "name", vm.Name)
+			if !m.seenOrphans[vm.Name] {
+				m.seenOrphans[vm.Name] = true
+				m.orphanCounter++
+				m.mu.Unlock()
+				m.logger.Warn("orphan resource detected", "name", vm.Name)
+			} else {
+				m.mu.Unlock()
+			}
 		}
 	}
+
+	m.mu.Lock()
+	for name := range m.seenOrphans {
+		if !currentOrphans[name] {
+			delete(m.seenOrphans, name)
+		}
+	}
+	m.mu.Unlock()
 }

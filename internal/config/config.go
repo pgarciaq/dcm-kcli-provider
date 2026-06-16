@@ -17,8 +17,6 @@ type Config struct {
 	ProviderNameVM       string
 	ProviderNameCluster  string
 	SchemaVersion        string
-	Region               string
-	Zone                 string
 	PollInterval         time.Duration
 	DebounceWindow       time.Duration
 	StateStorePath       string
@@ -53,8 +51,6 @@ func Load() (*Config, error) {
 		ProviderNameVM:      envOrDefault("PROVIDER_NAME_VM", "kcli-vm"),
 		ProviderNameCluster: envOrDefault("PROVIDER_NAME_CLUSTER", "kcli-cluster"),
 		SchemaVersion:       envOrDefault("SCHEMA_VERSION", "v1alpha1"),
-		Region:              os.Getenv("REGION"),
-		Zone:                os.Getenv("ZONE"),
 		StateStorePath:      envOrDefault("STATE_STORE_PATH", "/data/state.db"),
 		LogLevel:            envOrDefault("LOG_LEVEL", "info"),
 	}

@@ -2,6 +2,7 @@
 package kweb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
+
+	"github.com/pgarciaq/dcm-kcli-provider/internal/metrics"
 )
 
 var (
@@ -84,11 +87,14 @@ func (c *Client) CreateVM(ctx context.Context, name, profile string, params map[
 	for k, v := range params {
 		body[k] = v
 	}
-	return c.doPost(ctx, "/vms", body)
+	err := c.doPost(ctx, "/vms", body)
+	metrics.RecordKweb("create_vm", err)
+	return err
 }
 
 func (c *Client) ListVMs(ctx context.Context) ([]VMInfo, error) {
 	data, err := c.doGet(ctx, "/vms")
+	metrics.RecordKweb("list_vms", err)
 	if err != nil {
 		return nil, err
 	}
@@ -104,6 +110,7 @@ func (c *Client) ListVMs(ctx context.Context) ([]VMInfo, error) {
 
 func (c *Client) GetVM(ctx context.Context, name string) (*VMInfo, error) {
 	data, err := c.doGet(ctx, "/vms/"+url.PathEscape(name))
+	metrics.RecordKweb("get_vm", err)
 	if err != nil {
 		return nil, err
 	}
@@ -119,11 +126,14 @@ func (c *Client) GetVM(ctx context.Context, name string) (*VMInfo, error) {
 }
 
 func (c *Client) DeleteVM(ctx context.Context, name string) error {
-	return c.doDelete(ctx, "/vms/"+url.PathEscape(name))
+	err := c.doDelete(ctx, "/vms/"+url.PathEscape(name))
+	metrics.RecordKweb("delete_vm", err)
+	return err
 }
 
 func (c *Client) ListProfiles(ctx context.Context) ([]string, error) {
 	data, err := c.doGet(ctx, "/vmprofiles")
+	metrics.RecordKweb("list_profiles", err)
 	if err != nil {
 		return nil, err
 	}
@@ -149,11 +159,14 @@ func (c *Client) CreateCluster(ctx context.Context, name, clusterType string, pa
 	for k, v := range params {
 		body[k] = v
 	}
-	return c.doPost(ctx, "/kubes", body)
+	err := c.doPost(ctx, "/kubes", body)
+	metrics.RecordKweb("create_cluster", err)
+	return err
 }
 
 func (c *Client) ListClusters(ctx context.Context) ([]ClusterInfo, error) {
 	data, err := c.doGet(ctx, "/kubes")
+	metrics.RecordKweb("list_clusters", err)
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +198,7 @@ func (c *Client) ListClusters(ctx context.Context) ([]ClusterInfo, error) {
 
 func (c *Client) GetCluster(ctx context.Context, name string) (*ClusterInfo, error) {
 	data, err := c.doGet(ctx, "/kubes/"+url.PathEscape(name))
+	metrics.RecordKweb("get_cluster", err)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +232,7 @@ func (c *Client) GetCluster(ctx context.Context, name string) (*ClusterInfo, err
 
 func (c *Client) GetClusterKubeconfig(ctx context.Context, name string) (string, error) {
 	data, err := c.doGet(ctx, "/kubes/"+url.PathEscape(name)+"/kubeconfig")
+	metrics.RecordKweb("get_kubeconfig", err)
 	if err != nil {
 		return "", err
 	}
@@ -225,24 +240,32 @@ func (c *Client) GetClusterKubeconfig(ctx context.Context, name string) (string,
 }
 
 func (c *Client) DeleteCluster(ctx context.Context, name string) error {
-	return c.doDelete(ctx, "/kubes/"+url.PathEscape(name))
+	err := c.doDelete(ctx, "/kubes/"+url.PathEscape(name))
+	metrics.RecordKweb("delete_cluster", err)
+	return err
 }
 
 func (c *Client) CheckHealth(ctx context.Context) (bool, error) {
+	var metricErr error
+	defer func() { metrics.RecordKweb("health_check", metricErr) }()
+
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	if err := c.limiter.Wait(ctx); err != nil {
+		metricErr = err
 		return false, fmt.Errorf("rate limiter: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/host", nil)
 	if err != nil {
+		metricErr = err
 		return false, err
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		metricErr = ErrKwebUnreachable
 		return false, ErrKwebUnreachable
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -251,6 +274,7 @@ func (c *Client) CheckHealth(ctx context.Context) (bool, error) {
 	if resp.StatusCode == http.StatusOK {
 		return true, nil
 	}
+	metricErr = fmt.Errorf("HTTP %d", resp.StatusCode)
 	return false, nil
 }
 
@@ -263,7 +287,7 @@ func (c *Client) doPost(ctx context.Context, path string, body interface{}) erro
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, strings.NewReader(string(jsonBody)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, bytes.NewReader(jsonBody))
 	if err != nil {
 		return err
 	}

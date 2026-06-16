@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/kweb"
+	"github.com/pgarciaq/dcm-kcli-provider/internal/metrics"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/store"
 )
 
@@ -260,6 +261,8 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 		}, nil
 	}
 
+	metrics.ResourcesManaged.WithLabelValues("vm").Inc()
+
 	status := "PROVISIONING"
 	path := fmt.Sprintf("vms/%s", id)
 	return CreateVM201JSONResponse{
@@ -415,6 +418,7 @@ func (s *StrictServerImpl) DeleteVM(ctx context.Context, req DeleteVMRequestObje
 		Timestamp: time.Now().UTC(),
 	})
 	_ = s.store.Delete(vmID)
+	metrics.ResourcesManaged.WithLabelValues("vm").Dec()
 
 	return DeleteVM204Response{}, nil
 }
@@ -498,6 +502,8 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 		}, nil
 	}
 
+	metrics.ResourcesManaged.WithLabelValues("cluster").Inc()
+
 	status := "CREATING"
 	path := fmt.Sprintf("clusters/%s", id)
 	return CreateCluster201JSONResponse{
@@ -508,7 +514,7 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 	}, nil
 }
 
-func (s *StrictServerImpl) ListClusters(_ context.Context, req ListClustersRequestObject) (ListClustersResponseObject, error) {
+func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersRequestObject) (ListClustersResponseObject, error) {
 	maxPageSize := 50
 	if req.Params.MaxPageSize != nil && *req.Params.MaxPageSize > 0 {
 		maxPageSize = *req.Params.MaxPageSize
@@ -534,9 +540,27 @@ func (s *StrictServerImpl) ListClusters(_ context.Context, req ListClustersReque
 		}, nil
 	}
 
+	kwebClusters, kwebErr := s.kweb.ListClusters(ctx)
+	if kwebErr != nil && errors.Is(kwebErr, kweb.ErrKwebUnreachable) {
+		return ListClustersdefaultApplicationProblemPlusJSONResponse{
+			Body:       problemError(502, "kweb is unreachable"),
+			StatusCode: 502,
+		}, nil
+	}
+	kwebMap := make(map[string]kweb.ClusterInfo)
+	for _, cl := range kwebClusters {
+		kwebMap[cl.Name] = cl
+	}
+
 	results := make([]Cluster, 0, len(storeClusters))
 	for _, entry := range storeClusters {
-		results = append(results, entryToCluster(entry))
+		cl := entryToCluster(entry)
+		if kcl, ok := kwebMap[entry.KcliName]; ok {
+			if kcl.Version != "" {
+				cl.Spec.Version = &kcl.Version
+			}
+		}
+		results = append(results, cl)
 	}
 
 	if startIdx > len(results) {
@@ -640,6 +664,7 @@ func (s *StrictServerImpl) DeleteCluster(ctx context.Context, req DeleteClusterR
 		Timestamp: time.Now().UTC(),
 	})
 	_ = s.store.Delete(clusterID)
+	metrics.ResourcesManaged.WithLabelValues("cluster").Dec()
 
 	return DeleteCluster204Response{}, nil
 }
