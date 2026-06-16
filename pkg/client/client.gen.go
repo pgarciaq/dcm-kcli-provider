@@ -54,16 +54,16 @@ func (e ControlPlaneNodesCount) Valid() bool {
 
 // Defines values for HealthStatus.
 const (
-	Fail HealthStatus = "fail"
-	Pass HealthStatus = "pass"
+	Healthy   HealthStatus = "healthy"
+	Unhealthy HealthStatus = "unhealthy"
 )
 
 // Valid indicates whether the value is a known member of the HealthStatus enum.
 func (e HealthStatus) Valid() bool {
 	switch e {
-	case Fail:
+	case Healthy:
 		return true
-	case Pass:
+	case Unhealthy:
 		return true
 	default:
 		return false
@@ -92,11 +92,11 @@ type Access struct {
 
 // Cluster Kubernetes cluster resource
 type Cluster struct {
-	// ApiEndpoint Kubernetes API endpoint URL (populated when RUNNING)
+	// ApiEndpoint Kubernetes API endpoint URL (populated when READY)
 	ApiEndpoint *string `json:"api_endpoint,omitempty"`
 	Id          *string `json:"id,omitempty"`
 
-	// Kubeconfig Base64-encoded kubeconfig for cluster access (populated when RUNNING)
+	// Kubeconfig Base64-encoded kubeconfig for cluster access (populated when READY)
 	Kubeconfig *string `json:"kubeconfig,omitempty"`
 
 	// Path Resource path (e.g. clusters/{id})
@@ -201,7 +201,7 @@ type Storage struct {
 type VM struct {
 	Id *string `json:"id,omitempty"`
 
-	// Ip IP address of the VM (populated when RUNNING)
+	// Ip IP address of the VM (when available from kweb)
 	Ip *string `json:"ip,omitempty"`
 
 	// Path Resource path (e.g. vms/{id})

@@ -134,14 +134,14 @@ func (s *StrictServerImpl) doHealthCheck(ctx context.Context) (HealthStatus, *st
 		if err != nil {
 			msg = err.Error()
 		}
-		return Fail, &ver, &uptime, &msg
+		return Unhealthy, &ver, &uptime, &msg
 	}
-	return Pass, &ver, &uptime, nil
+	return Healthy, &ver, &uptime, nil
 }
 
 func (s *StrictServerImpl) GetHealth(ctx context.Context, _ GetHealthRequestObject) (GetHealthResponseObject, error) {
 	status, ver, uptime, msg := s.doHealthCheck(ctx)
-	if status == Fail {
+	if status == Unhealthy {
 		return GetHealth503JSONResponse{
 			Status: &status, Version: ver, Uptime: uptime, Message: msg,
 		}, nil
@@ -153,7 +153,7 @@ func (s *StrictServerImpl) GetHealth(ctx context.Context, _ GetHealthRequestObje
 
 func (s *StrictServerImpl) GetVMHealth(ctx context.Context, _ GetVMHealthRequestObject) (GetVMHealthResponseObject, error) {
 	status, ver, uptime, msg := s.doHealthCheck(ctx)
-	if status == Fail {
+	if status == Unhealthy {
 		return GetVMHealth503JSONResponse{
 			Status: &status, Version: ver, Uptime: uptime, Message: msg,
 		}, nil
@@ -165,7 +165,7 @@ func (s *StrictServerImpl) GetVMHealth(ctx context.Context, _ GetVMHealthRequest
 
 func (s *StrictServerImpl) GetClusterHealth(ctx context.Context, _ GetClusterHealthRequestObject) (GetClusterHealthResponseObject, error) {
 	status, ver, uptime, msg := s.doHealthCheck(ctx)
-	if status == Fail {
+	if status == Unhealthy {
 		return GetClusterHealth503JSONResponse{
 			Status: &status, Version: ver, Uptime: uptime, Message: msg,
 		}, nil

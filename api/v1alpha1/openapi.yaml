@@ -337,7 +337,7 @@ components:
       properties:
         status:
           type: string
-          enum: [pass, fail]
+          enum: [healthy, unhealthy]
         version:
           type: string
         uptime:

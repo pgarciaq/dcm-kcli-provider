@@ -178,7 +178,7 @@ var _ = Describe("Handlers", func() {
 
 	// ====== Health handlers ======
 
-	It("returns 200 with pass, version, and uptime when kweb is healthy", func() {
+	It("returns 200 with healthy, version, and uptime when kweb is healthy", func() {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/health", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
@@ -186,13 +186,13 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(200))
 		var body map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &body)
-		Expect(body["status"]).To(Equal("pass"))
+		Expect(body["status"]).To(Equal("healthy"))
 		Expect(body["version"]).To(Equal("0.1.0"))
 		Expect(body).To(HaveKey("uptime"))
 		Expect(body["uptime"]).To(BeNumerically(">=", 0))
 	})
 
-	It("returns 503 with fail status and message when kweb is unhealthy", func() {
+	It("returns 503 with unhealthy status and message when kweb is unhealthy", func() {
 		kwebMock.healthResult = false
 		req := httptest.NewRequest(http.MethodGet, "/api/v1alpha1/health", nil)
 		w := httptest.NewRecorder()
@@ -201,7 +201,7 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(503))
 		var body map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &body)
-		Expect(body["status"]).To(Equal("fail"))
+		Expect(body["status"]).To(Equal("unhealthy"))
 		Expect(body).To(HaveKey("message"))
 		Expect(body["message"].(string)).To(ContainSubstring("unreachable"))
 		Expect(body).To(HaveKey("uptime"))
@@ -215,7 +215,7 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(200))
 		var body map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &body)
-		Expect(body["status"]).To(Equal("pass"))
+		Expect(body["status"]).To(Equal("healthy"))
 	})
 
 	It("GET /vms/health returns 503 when kweb is unhealthy", func() {
@@ -235,7 +235,7 @@ var _ = Describe("Handlers", func() {
 		Expect(w.Code).To(Equal(200))
 		var body map[string]interface{}
 		json.Unmarshal(w.Body.Bytes(), &body)
-		Expect(body["status"]).To(Equal("pass"))
+		Expect(body["status"]).To(Equal("healthy"))
 	})
 
 	It("GET /clusters/health returns 503 when kweb is unhealthy", func() {
