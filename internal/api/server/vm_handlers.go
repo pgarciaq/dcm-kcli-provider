@@ -35,16 +35,9 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 	spec := req.Body.Spec
 
 	profile := resolveVMProfile(spec)
-	if s.profiles != nil {
+	if s.profiles != nil && !s.profiles.HasProfile(profile) {
 		available := s.profiles.Profiles()
-		found := false
-		for _, p := range available {
-			if p == profile {
-				found = true
-				break
-			}
-		}
-		if len(available) > 0 && !found {
+		if len(available) > 0 {
 			return CreateVM400ApplicationProblemPlusJSONResponse(
 				problemError(400, fmt.Sprintf("profile '%s' not found; available profiles: %s", profile, strings.Join(available, ", "))),
 			), nil
@@ -52,7 +45,7 @@ func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObje
 	}
 
 	kcliName := dcmPrefix + resolveVMName(spec, req.Params.Id)
-	params := map[string]interface{}{}
+	params := make(map[string]interface{}, 8)
 
 	if spec.Memory != nil {
 		memMB, err := parseMemorySize(spec.Memory.Size)
@@ -160,7 +153,7 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 		}, nil
 	}
 
-	sort.SliceStable(storeVMs, func(i, j int) bool {
+	sort.Slice(storeVMs, func(i, j int) bool {
 		if storeVMs[i].CreatedAt.Equal(storeVMs[j].CreatedAt) {
 			return storeVMs[i].ID < storeVMs[j].ID
 		}

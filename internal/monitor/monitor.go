@@ -37,6 +37,7 @@ type Monitor struct {
 
 	mu            sync.Mutex
 	profiles      []string
+	profileSet    map[string]struct{}
 	lastPublish   map[string]time.Time
 	pending       map[string]*pendingEvent
 	orphanCounter int
@@ -72,6 +73,13 @@ func (m *Monitor) Profiles() []string {
 	return copied
 }
 
+func (m *Monitor) HasProfile(name string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.profileSet[name]
+	return ok
+}
+
 func (m *Monitor) OrphanCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -98,9 +106,17 @@ func (m *Monitor) poll(ctx context.Context) {
 	start := time.Now()
 	defer func() { metrics.MonitorPollDuration.Observe(time.Since(start).Seconds()) }()
 
-	m.refreshProfiles(ctx)
-	kwebVMs, storeVMs := m.pollVMs(ctx)
-	m.pollClusters(ctx)
+	var (
+		kwebVMs  []kweb.VMInfo
+		storeVMs []store.ResourceEntry
+		wg       sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() { defer wg.Done(); m.refreshProfiles(ctx) }()
+	go func() { defer wg.Done(); kwebVMs, storeVMs = m.pollVMs(ctx) }()
+	go func() { defer wg.Done(); m.pollClusters(ctx) }()
+	wg.Wait()
+
 	m.flushPending(ctx)
 	m.detectVMOrphans(kwebVMs, storeVMs)
 	m.firstPollOnce.Do(func() { close(m.firstPollDone) })
@@ -112,8 +128,13 @@ func (m *Monitor) refreshProfiles(ctx context.Context) {
 		m.logger.Warn("failed to refresh profiles", "error", err)
 		return
 	}
+	pset := make(map[string]struct{}, len(profiles))
+	for _, p := range profiles {
+		pset[p] = struct{}{}
+	}
 	m.mu.Lock()
 	m.profiles = profiles
+	m.profileSet = pset
 	m.mu.Unlock()
 }
 
@@ -142,6 +163,10 @@ func (m *Monitor) pollVMs(ctx context.Context) ([]kweb.VMInfo, []store.ResourceE
 				m.publishWithDebounce(ctx, entry.ID, "vm", "DELETED", fmt.Sprintf("VM %s no longer found in kweb", entry.KcliName))
 				_ = m.store.Delete(entry.ID)
 				metrics.ResourcesManaged.WithLabelValues("vm").Dec()
+				m.mu.Lock()
+				delete(m.lastPublish, entry.ID)
+				delete(m.pending, entry.ID)
+				m.mu.Unlock()
 			}
 			continue
 		}
@@ -183,6 +208,10 @@ func (m *Monitor) pollClusters(ctx context.Context) {
 				m.publishWithDebounce(ctx, entry.ID, "cluster", "DELETED", fmt.Sprintf("Cluster %s no longer found", entry.KcliName))
 				_ = m.store.Delete(entry.ID)
 				metrics.ResourcesManaged.WithLabelValues("cluster").Dec()
+				m.mu.Lock()
+				delete(m.lastPublish, entry.ID)
+				delete(m.pending, entry.ID)
+				m.mu.Unlock()
 			}
 			continue
 		}

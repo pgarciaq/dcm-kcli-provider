@@ -51,6 +51,20 @@ func TestMaxBodySize_LimitsLargeBody(t *testing.T) {
 	}
 }
 
+func TestMaxBodySize_SkipsGET(t *testing.T) {
+	handler := handlers.MaxBodySize(10)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d", rr.Code)
+	}
+}
+
 func TestWriteRFC7807(t *testing.T) {
 	rr := httptest.NewRecorder()
 	handlers.WriteRFC7807(rr, 413, "Request Entity Too Large", "body too big")
@@ -75,9 +89,9 @@ func TestRequestLogger_InjectsRequestID(t *testing.T) {
 	base := slog.Default()
 	mw := handlers.RequestLogger(base)
 
-	var gotLogger *slog.Logger
+	var gotID string
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotLogger = handlers.LoggerFromContext(r.Context())
+		gotID = handlers.RequestIDFromContext(r.Context())
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -86,14 +100,15 @@ func TestRequestLogger_InjectsRequestID(t *testing.T) {
 	rr := httptest.NewRecorder()
 	chain.ServeHTTP(rr, req)
 
-	if gotLogger == nil {
-		t.Fatal("expected logger in context, got nil")
+	if gotID == "" {
+		t.Fatal("expected request ID in context, got empty")
 	}
 }
 
 func TestLoggerFromContext_DefaultsWithoutMiddleware(t *testing.T) {
+	base := slog.Default()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	l := handlers.LoggerFromContext(req.Context())
+	l := handlers.LoggerFromContext(req.Context(), base)
 	if l == nil {
 		t.Fatal("expected default logger, got nil")
 	}

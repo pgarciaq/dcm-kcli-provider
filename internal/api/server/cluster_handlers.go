@@ -53,7 +53,7 @@ func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterR
 	}
 
 	kcliName := dcmPrefix + resolveClusterName(spec, req.Params.Id)
-	params := map[string]interface{}{}
+	params := make(map[string]interface{}, 8)
 	if spec.Nodes != nil {
 		if spec.Nodes.ControlPlane != nil && spec.Nodes.ControlPlane.Count != nil {
 			params["ctlplanes"] = int(*spec.Nodes.ControlPlane.Count)
@@ -158,7 +158,7 @@ func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersReq
 		}, nil
 	}
 
-	sort.SliceStable(storeClusters, func(i, j int) bool {
+	sort.Slice(storeClusters, func(i, j int) bool {
 		if storeClusters[i].CreatedAt.Equal(storeClusters[j].CreatedAt) {
 			return storeClusters[i].ID < storeClusters[j].ID
 		}
@@ -224,16 +224,15 @@ func (s *StrictServerImpl) GetCluster(ctx context.Context, req GetClusterRequest
 	}
 
 	if entry.Status == "ACTIVE" {
-		raw, kcErr := s.kweb.GetClusterKubeconfig(ctx, entry.KcliName)
-		if kcErr != nil {
-			s.logger.Warn("kweb GetClusterKubeconfig failed, omitting kubeconfig", "cluster", entry.KcliName, "error", kcErr)
-		} else if raw != "" {
-			encoded := base64.StdEncoding.EncodeToString([]byte(raw))
-			resp.Kubeconfig = &encoded
-			if ep := extractAPIEndpoint(raw); ep != "" {
-				resp.ApiEndpoint = &ep
-			}
+		kc, ep := s.getCachedKubeconfig(ctx, entry.ID, entry.KcliName)
+		if kc != "" {
+			resp.Kubeconfig = &kc
 		}
+		if ep != "" {
+			resp.ApiEndpoint = &ep
+		}
+	} else {
+		s.kcCache.Delete(entry.ID)
 	}
 
 	return GetCluster200JSONResponse(resp), nil
@@ -282,9 +281,35 @@ func (s *StrictServerImpl) DeleteCluster(ctx context.Context, req DeleteClusterR
 		Timestamp: time.Now().UTC(),
 	})
 	_ = s.store.Delete(clusterID)
+	s.kcCache.Delete(clusterID)
 	metrics.ResourcesManaged.WithLabelValues("cluster").Dec()
 
 	return DeleteCluster204Response{}, nil
+}
+
+func (s *StrictServerImpl) getCachedKubeconfig(ctx context.Context, clusterID, kcliName string) (string, string) {
+	if v, ok := s.kcCache.Load(clusterID); ok {
+		cached := v.(*cachedKubeconfig)
+		if time.Since(cached.fetchedAt) < kubeconfigCacheTTL {
+			return cached.kubeconfig, cached.endpoint
+		}
+	}
+	raw, err := s.kweb.GetClusterKubeconfig(ctx, kcliName)
+	if err != nil {
+		s.logger.Warn("kweb GetClusterKubeconfig failed, omitting kubeconfig", "cluster", kcliName, "error", err)
+		return "", ""
+	}
+	if raw == "" {
+		return "", ""
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(raw))
+	ep := extractAPIEndpoint(raw)
+	s.kcCache.Store(clusterID, &cachedKubeconfig{
+		kubeconfig: encoded,
+		endpoint:   ep,
+		fetchedAt:  time.Now(),
+	})
+	return encoded, ep
 }
 
 // extractAPIEndpoint parses a kubeconfig YAML, follows current-context

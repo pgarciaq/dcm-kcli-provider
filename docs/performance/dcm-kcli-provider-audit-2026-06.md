@@ -8,6 +8,10 @@
 **Scope:** Full codebase — API handlers, kweb client, bbolt store, monitor loop,
 NATS publisher, metrics middleware, registration, new security/ops code
 
+> **Status:** All 13 actionable findings (P1-01, P1-02, P2-01 through P2-07,
+> P3-01 through P3-04) have been implemented. P3-05 cancelled (middleware
+> version lacks Skipper support). 9 items deferred with revisit triggers.
+
 ## Overall Assessment
 
 The dcm-kcli-provider remains **I/O-bound**. The v2 adversarial fixes added

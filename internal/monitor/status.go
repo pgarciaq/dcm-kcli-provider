@@ -8,27 +8,31 @@ import (
 
 const provisioningThreshold = 10 * time.Minute
 
+func eqf(s, target string) bool { return strings.EqualFold(s, target) }
+
 // MapVMStatus maps kweb VM status strings to DCM canonical states.
-// kweb typically returns lowercase values but we normalize defensively.
+// Uses EqualFold for zero-allocation case-insensitive comparison.
 func MapVMStatus(kwebStatus string, createdAt time.Time) string {
-	switch strings.ToLower(kwebStatus) {
-	case "up", "running":
+	if eqf(kwebStatus, "up") || eqf(kwebStatus, "running") {
 		return "RUNNING"
-	case "down", "shutoff":
+	}
+	if eqf(kwebStatus, "down") || eqf(kwebStatus, "shutoff") {
 		if time.Since(createdAt) < provisioningThreshold {
 			return "PROVISIONING"
 		}
 		return "STOPPED"
-	case "paused", "suspended":
+	}
+	if eqf(kwebStatus, "paused") || eqf(kwebStatus, "suspended") {
 		return "PAUSED"
-	case "error", "crashed", "nostate", "fault":
-		return "ERROR"
-	case "shuttingdown", "stopping", "powering-off":
-		return "STOPPING"
-	default:
-		slog.Warn("unrecognized kweb VM status, mapping to ERROR", "kweb_status", kwebStatus)
+	}
+	if eqf(kwebStatus, "error") || eqf(kwebStatus, "crashed") || eqf(kwebStatus, "nostate") || eqf(kwebStatus, "fault") {
 		return "ERROR"
 	}
+	if eqf(kwebStatus, "shuttingdown") || eqf(kwebStatus, "stopping") || eqf(kwebStatus, "powering-off") {
+		return "STOPPING"
+	}
+	slog.Warn("unrecognized kweb VM status, mapping to ERROR", "kweb_status", kwebStatus)
+	return "ERROR"
 }
 
 func MapClusterStatus(hasNodes bool, createdAt time.Time, clusterCreateTimeout time.Duration) string {

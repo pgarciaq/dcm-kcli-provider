@@ -240,6 +240,15 @@ func (m *mockProfileCache) Profiles() []string {
 	return m.profiles
 }
 
+func (m *mockProfileCache) HasProfile(name string) bool {
+	for _, p := range m.profiles {
+		if p == name {
+			return true
+		}
+	}
+	return false
+}
+
 type slowCreateKweb struct {
 	mockKweb
 	delay         time.Duration

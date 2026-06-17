@@ -183,7 +183,6 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	r.Use(middleware.RequestID)
 	r.Use(handlers.RequestLogger(logger))
 	r.Use(handlers.PanicRecovery(logger))
-	r.Use(middleware.Logger)
 	r.Use(metrics.Middleware)
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
 	r.Use(handlers.MaxBodySize(1 << 20)) // 1 MB

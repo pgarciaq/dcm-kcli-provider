@@ -26,19 +26,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - List endpoints (`ListVMs`, `ListClusters`) now fetch store and kweb data in parallel (PERF-01)
-- List results sorted by `CreatedAt` descending with ID tiebreaker via `sort.SliceStable` (COR-02, NEW-08)
+- List results sorted by `CreatedAt` descending with ID tiebreaker via `sort.Slice` (COR-02, NEW-08, P2-02)
 - Split `impl.go` (928 lines) into `vm_handlers.go`, `cluster_handlers.go`, `health_handlers.go`, `helpers.go` (DES-01)
 - `startedAt` timestamp shared from `Server` to `StrictServerImpl` via `WithStartedAt` option (DES-02)
 - Readiness probe uses `atomic.Bool` per registrar — only reports registered on HTTP 200/201 (NEW-01)
 - Registrars stopped via `Stop()` before deregistration on shutdown (prevents re-register race) (NEW-02)
 - Dropped provider_hints keys logged at warn level; risk documented per key (NEW-04/05)
 - Body-too-large errors return RFC 7807 `application/problem+json` 413 response (NEW-06)
-- `MapVMStatus` tolerates mixed-case kweb statuses via `strings.ToLower` (NEW-07)
+- `MapVMStatus` tolerates mixed-case kweb statuses via `strings.EqualFold` (zero allocation) (NEW-07, P1-01)
 - `MonitorStatusChanges` metric help text clarifies coalesced debounce semantics (NEW-10)
 - Deregister resets `RegistrationStatus` gauge to 0 (NEW-13)
 - `govulncheck` pinned to v1.3.0 in CI (NEW-15)
 - kweb `parseResponse` body read limited to 10 MB via `io.LimitReader` (NEW-12)
 - `Server.Addr()` uses `sync.Map` for race-safe listener address access
+- Monitor polls kweb concurrently (profiles, VMs, clusters in parallel goroutines) (P1-02)
+- `RequestLogger` stores only request ID string in context (no per-request slog.Logger allocation) (P2-01)
+- Health cache uses `singleflight` to deduplicate concurrent cache-miss kweb calls (P2-03)
+- `lastPublish` debounce map pruned on resource deletion (prevents unbounded growth) (P2-04)
+- `GetCluster` kubeconfig cached in-memory with 5-minute TTL (avoids per-GET kweb fetch) (P2-05)
+- Removed duplicate chi `middleware.Logger` (single structured access log) (P2-06)
+- `HasProfile()` method for O(1) profile lookup without slice copy (P2-07)
+- RFC 7807 `WriteRFC7807` uses typed struct instead of `map[string]interface{}` (P3-01)
+- `MaxBodySize` only wraps body on mutating HTTP methods (P3-02)
+- `mergeKcliHints` uses inline comparison instead of allocating skip map (P3-03)
+- Create handler params maps pre-sized with `make(map, 8)` (P3-04)
 
 ### Security
 

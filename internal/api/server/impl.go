@@ -40,6 +40,7 @@ type StateStore interface {
 // ProfileCache provides cached kweb VM profile names.
 type ProfileCache interface {
 	Profiles() []string
+	HasProfile(name string) bool
 }
 
 var supportedClusterTypes = map[string]string{
@@ -54,6 +55,14 @@ var rejectedClusterTypes = map[string]bool{
 	"kind": true,
 }
 
+type cachedKubeconfig struct {
+	kubeconfig string
+	endpoint   string
+	fetchedAt  time.Time
+}
+
+const kubeconfigCacheTTL = 5 * time.Minute
+
 // StrictServerImpl implements the generated StrictServerInterface.
 type StrictServerImpl struct {
 	kweb      KwebClient
@@ -64,6 +73,7 @@ type StrictServerImpl struct {
 	version   string
 	startedAt time.Time
 	createMu  sync.Mutex
+	kcCache   sync.Map // map[clusterID]*cachedKubeconfig
 }
 
 func NewStrictServerImpl(k KwebClient, s StateStore, pub events.Publisher, profiles ProfileCache, version string, opts ...func(*StrictServerImpl)) *StrictServerImpl {

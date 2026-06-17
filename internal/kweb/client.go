@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
 	"golang.org/x/time/rate"
 
 	"github.com/pgarciaq/dcm-kcli-provider/internal/metrics"
@@ -80,6 +81,7 @@ type Client struct {
 	healthOK      bool
 	healthErr     error
 	healthChecked time.Time
+	healthSF      singleflight.Group
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -271,16 +273,27 @@ func (c *Client) CheckHealth(ctx context.Context) (bool, error) {
 	}
 	c.healthMu.Unlock()
 
-	ok, err := c.checkHealthUncached(ctx)
+	type healthResult struct {
+		ok  bool
+		err error
+	}
+	v, err, _ := c.healthSF.Do("health", func() (interface{}, error) {
+		ok, err := c.checkHealthUncached(ctx)
+		return healthResult{ok, err}, nil
+	})
+	hr := v.(healthResult)
+	if err != nil {
+		return false, err
+	}
 
 	c.healthMu.Lock()
 	c.healthCached = true
-	c.healthOK = ok
-	c.healthErr = err
+	c.healthOK = hr.ok
+	c.healthErr = hr.err
 	c.healthChecked = time.Now()
 	c.healthMu.Unlock()
 
-	return ok, err
+	return hr.ok, hr.err
 }
 
 func (c *Client) checkHealthUncached(ctx context.Context) (bool, error) {

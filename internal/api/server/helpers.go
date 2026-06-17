@@ -64,12 +64,8 @@ func mergeKcliHints(hints *ProviderHints, params map[string]interface{}, exclude
 	if !ok {
 		return
 	}
-	skip := make(map[string]bool, len(excludeKeys))
-	for _, k := range excludeKeys {
-		skip[k] = true
-	}
 	for k, v := range m {
-		if skip[k] {
+		if sliceContains(excludeKeys, k) {
 			continue
 		}
 		if !allowedKcliHintKeys[k] {
@@ -97,4 +93,13 @@ func parseMemorySize(size string) (int, error) {
 		return v, err
 	}
 	return 0, fmt.Errorf("unrecognized memory unit in %q", size)
+}
+
+func sliceContains(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
