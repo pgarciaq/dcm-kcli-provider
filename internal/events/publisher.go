@@ -67,7 +67,10 @@ func (p *NATSPublisher) IsConnected() bool {
 	return p.conn != nil && p.conn.IsConnected()
 }
 
-func (p *NATSPublisher) PublishVMEvent(_ context.Context, event StatusEvent) error {
+func (p *NATSPublisher) PublishVMEvent(ctx context.Context, event StatusEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !p.IsConnected() {
 		return fmt.Errorf("publishing VM event: %w", &NotConnectedError{})
 	}
@@ -78,7 +81,10 @@ func (p *NATSPublisher) PublishVMEvent(_ context.Context, event StatusEvent) err
 	return err
 }
 
-func (p *NATSPublisher) PublishClusterEvent(_ context.Context, event StatusEvent) error {
+func (p *NATSPublisher) PublishClusterEvent(ctx context.Context, event StatusEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !p.IsConnected() {
 		return fmt.Errorf("publishing cluster event: %w", &NotConnectedError{})
 	}

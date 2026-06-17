@@ -156,7 +156,7 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 
 	sort.Slice(storeVMs, func(i, j int) bool { return storeVMs[i].CreatedAt.After(storeVMs[j].CreatedAt) })
 
-	kwebMap := make(map[string]kweb.VMInfo)
+	kwebMap := make(map[string]kweb.VMInfo, len(kwebVMs))
 	for _, vm := range kwebVMs {
 		kwebMap[vm.Name] = vm
 	}
@@ -311,7 +311,7 @@ func resolveVMName(spec VMSpec, clientID *string) string {
 func entryToVM(entry store.ResourceEntry) VM {
 	name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
 	status := entry.Status
-	path := fmt.Sprintf("vms/%s", entry.ID)
+	path := "vms/" + entry.ID
 	st := Vm
 	return VM{
 		Id:     &entry.ID,

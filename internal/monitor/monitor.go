@@ -12,6 +12,7 @@ import (
 	"github.com/pgarciaq/dcm-kcli-provider/internal/events"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/kweb"
 	"github.com/pgarciaq/dcm-kcli-provider/internal/metrics"
+	"github.com/pgarciaq/dcm-kcli-provider/internal/store"
 )
 
 type Config struct {
@@ -98,10 +99,10 @@ func (m *Monitor) poll(ctx context.Context) {
 	defer func() { metrics.MonitorPollDuration.Observe(time.Since(start).Seconds()) }()
 
 	m.refreshProfiles(ctx)
-	kwebVMs := m.pollVMs(ctx)
+	kwebVMs, storeVMs := m.pollVMs(ctx)
 	m.pollClusters(ctx)
 	m.flushPending(ctx)
-	m.detectVMOrphans(kwebVMs)
+	m.detectVMOrphans(kwebVMs, storeVMs)
 	m.firstPollOnce.Do(func() { close(m.firstPollDone) })
 }
 
@@ -116,14 +117,14 @@ func (m *Monitor) refreshProfiles(ctx context.Context) {
 	m.mu.Unlock()
 }
 
-func (m *Monitor) pollVMs(ctx context.Context) []kweb.VMInfo {
+func (m *Monitor) pollVMs(ctx context.Context) ([]kweb.VMInfo, []store.ResourceEntry) {
 	kwebVMs, err := m.kweb.ListVMs(ctx)
 	if err != nil {
 		m.logger.Warn("failed to list VMs from kweb", "error", err)
-		return nil
+		return nil, nil
 	}
 
-	kwebMap := make(map[string]kweb.VMInfo)
+	kwebMap := make(map[string]kweb.VMInfo, len(kwebVMs))
 	for _, vm := range kwebVMs {
 		kwebMap[vm.Name] = vm
 	}
@@ -131,7 +132,7 @@ func (m *Monitor) pollVMs(ctx context.Context) []kweb.VMInfo {
 	storeVMs, err := m.store.List("vm")
 	if err != nil {
 		m.logger.Warn("failed to list VMs from store", "error", err)
-		return kwebVMs
+		return kwebVMs, nil
 	}
 
 	for _, entry := range storeVMs {
@@ -151,7 +152,7 @@ func (m *Monitor) pollVMs(ctx context.Context) []kweb.VMInfo {
 			_ = m.store.UpdateStatus(entry.ID, newStatus)
 		}
 	}
-	return kwebVMs
+	return kwebVMs, storeVMs
 }
 
 func (m *Monitor) pollClusters(ctx context.Context) {
@@ -161,7 +162,7 @@ func (m *Monitor) pollClusters(ctx context.Context) {
 		return
 	}
 
-	kwebMap := make(map[string]kweb.ClusterInfo)
+	kwebMap := make(map[string]kweb.ClusterInfo, len(kwebClusters))
 	for _, cl := range kwebClusters {
 		kwebMap[cl.Name] = cl
 	}
@@ -196,9 +197,8 @@ func (m *Monitor) pollClusters(ctx context.Context) {
 	}
 }
 
-func (m *Monitor) publishWithDebounce(_ context.Context, id, resourceType, status, message string) {
+func (m *Monitor) publishWithDebounce(ctx context.Context, id, resourceType, status, message string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	m.pending[id] = &pendingEvent{
 		resourceType: resourceType,
@@ -209,20 +209,33 @@ func (m *Monitor) publishWithDebounce(_ context.Context, id, resourceType, statu
 	metrics.MonitorStatusChanges.Inc()
 
 	lastTime, exists := m.lastPublish[id]
-	if exists && time.Since(lastTime) < m.config.DebounceWindow {
-		return
-	}
+	shouldFlush := !exists || time.Since(lastTime) >= m.config.DebounceWindow
 
-	m.flushOne(id)
+	var pe *pendingEvent
+	if shouldFlush {
+		pe = m.extractPending(id)
+	}
+	m.mu.Unlock()
+
+	if pe != nil {
+		m.publishEvent(ctx, id, pe)
+	}
 }
 
-func (m *Monitor) flushOne(id string) {
+func (m *Monitor) extractPending(id string) *pendingEvent {
 	pe, ok := m.pending[id]
 	if !ok {
-		return
+		return nil
 	}
 	delete(m.pending, id)
 	m.lastPublish[id] = time.Now()
+	return pe
+}
+
+func (m *Monitor) publishEvent(ctx context.Context, id string, pe *pendingEvent) {
+	if pe == nil {
+		return
+	}
 
 	evt := events.StatusEvent{
 		ID:        id,
@@ -233,24 +246,36 @@ func (m *Monitor) flushOne(id string) {
 
 	var err error
 	if pe.resourceType == "vm" {
-		err = m.publisher.PublishVMEvent(context.Background(), evt)
+		err = m.publisher.PublishVMEvent(ctx, evt)
 	} else {
-		err = m.publisher.PublishClusterEvent(context.Background(), evt)
+		err = m.publisher.PublishClusterEvent(ctx, evt)
 	}
 	if err != nil {
 		m.logger.Warn("failed to publish status event", "id", id, "error", err)
 	}
 }
 
-func (m *Monitor) flushPending(_ context.Context) {
+func (m *Monitor) flushPending(ctx context.Context) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	var toFlush []struct {
+		id string
+		pe *pendingEvent
+	}
 	for id := range m.pending {
 		lastTime, exists := m.lastPublish[id]
 		if !exists || time.Since(lastTime) >= m.config.DebounceWindow {
-			m.flushOne(id)
+			if pe := m.extractPending(id); pe != nil {
+				toFlush = append(toFlush, struct {
+					id string
+					pe *pendingEvent
+				}{id, pe})
+			}
 		}
+	}
+	m.mu.Unlock()
+
+	for _, item := range toFlush {
+		m.publishEvent(ctx, item.id, item.pe)
 	}
 }
 
@@ -258,9 +283,14 @@ func (m *Monitor) PollOnce(ctx context.Context) {
 	m.poll(ctx)
 }
 
-func (m *Monitor) detectVMOrphans(kwebVMs []kweb.VMInfo) {
+func (m *Monitor) detectVMOrphans(kwebVMs []kweb.VMInfo, storeVMs []store.ResourceEntry) {
 	if kwebVMs == nil {
 		return
+	}
+
+	knownNames := make(map[string]bool, len(storeVMs))
+	for _, entry := range storeVMs {
+		knownNames[entry.KcliName] = true
 	}
 
 	currentOrphans := make(map[string]bool)
@@ -269,8 +299,7 @@ func (m *Monitor) detectVMOrphans(kwebVMs []kweb.VMInfo) {
 		if !strings.HasPrefix(vm.Name, "dcm-") {
 			continue
 		}
-		_, err := m.store.FindByKcliName(vm.Name)
-		if err != nil {
+		if !knownNames[vm.Name] {
 			currentOrphans[vm.Name] = true
 			m.mu.Lock()
 			if !m.seenOrphans[vm.Name] {

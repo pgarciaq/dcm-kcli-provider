@@ -2,12 +2,18 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
+)
+
+var (
+	typeTagVM      = []byte(`"type":"vm"`)
+	typeTagCluster = []byte(`"type":"cluster"`)
 )
 
 var (
@@ -142,9 +148,15 @@ func (s *Store) Get(id string) (*ResourceEntry, error) {
 }
 
 func (s *Store) List(resourceType string) ([]ResourceEntry, error) {
+	tag := typeTag(resourceType)
 	var entries []ResourceEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketName).ForEach(func(_, v []byte) error {
+		b := tx.Bucket(bucketName)
+		entries = make([]ResourceEntry, 0, b.Stats().KeyN)
+		return b.ForEach(func(_, v []byte) error {
+			if tag != nil && !bytes.Contains(v, tag) {
+				return nil
+			}
 			var entry ResourceEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
 				return err
@@ -159,9 +171,15 @@ func (s *Store) List(resourceType string) ([]ResourceEntry, error) {
 }
 
 func (s *Store) ListByStatus(resourceType, status string) ([]ResourceEntry, error) {
+	tag := typeTag(resourceType)
 	var entries []ResourceEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketName).ForEach(func(_, v []byte) error {
+		b := tx.Bucket(bucketName)
+		entries = make([]ResourceEntry, 0, b.Stats().KeyN)
+		return b.ForEach(func(_, v []byte) error {
+			if tag != nil && !bytes.Contains(v, tag) {
+				return nil
+			}
 			var entry ResourceEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
 				return err
@@ -238,7 +256,9 @@ func (s *Store) FindByKcliName(name string) (*ResourceEntry, error) {
 func (s *Store) ListAll() ([]ResourceEntry, error) {
 	var entries []ResourceEntry
 	err := s.db.View(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketName).ForEach(func(_, v []byte) error {
+		b := tx.Bucket(bucketName)
+		entries = make([]ResourceEntry, 0, b.Stats().KeyN)
+		return b.ForEach(func(_, v []byte) error {
 			var entry ResourceEntry
 			if err := json.Unmarshal(v, &entry); err != nil {
 				return err
@@ -248,4 +268,15 @@ func (s *Store) ListAll() ([]ResourceEntry, error) {
 		})
 	})
 	return entries, err
+}
+
+func typeTag(resourceType string) []byte {
+	switch resourceType {
+	case "vm":
+		return typeTagVM
+	case "cluster":
+		return typeTagCluster
+	default:
+		return nil
+	}
 }

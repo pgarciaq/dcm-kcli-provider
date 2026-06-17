@@ -1,14 +1,13 @@
 package monitor
 
-import (
-	"strings"
-	"time"
-)
+import "time"
 
 const provisioningThreshold = 10 * time.Minute
 
+// MapVMStatus maps kweb VM status strings to DCM canonical states.
+// kweb returns lowercase status values (e.g., "up", "down", "running").
 func MapVMStatus(kwebStatus string, createdAt time.Time) string {
-	switch strings.ToLower(kwebStatus) {
+	switch kwebStatus {
 	case "up", "running":
 		return "RUNNING"
 	case "down", "shutoff":

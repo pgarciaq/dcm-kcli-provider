@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -61,11 +62,19 @@ type ClusterInfo struct {
 	Nodes       [][]string `json:"nodes,omitempty"`
 }
 
+const healthCacheTTL = 5 * time.Second
+
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	timeout    time.Duration
 	limiter    *rate.Limiter
+
+	healthMu      sync.Mutex
+	healthCached  bool
+	healthOK      bool
+	healthErr     error
+	healthChecked time.Time
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -73,6 +82,9 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{
 			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 10,
+			},
 		},
 		timeout: timeout,
 		limiter: rate.NewLimiter(rate.Limit(10), 20),
@@ -246,6 +258,27 @@ func (c *Client) DeleteCluster(ctx context.Context, name string) error {
 }
 
 func (c *Client) CheckHealth(ctx context.Context) (bool, error) {
+	c.healthMu.Lock()
+	if c.healthCached && time.Since(c.healthChecked) < healthCacheTTL {
+		ok, err := c.healthOK, c.healthErr
+		c.healthMu.Unlock()
+		return ok, err
+	}
+	c.healthMu.Unlock()
+
+	ok, err := c.checkHealthUncached(ctx)
+
+	c.healthMu.Lock()
+	c.healthCached = true
+	c.healthOK = ok
+	c.healthErr = err
+	c.healthChecked = time.Now()
+	c.healthMu.Unlock()
+
+	return ok, err
+}
+
+func (c *Client) checkHealthUncached(ctx context.Context) (bool, error) {
 	var metricErr error
 	defer func() { metrics.RecordKweb("health_check", metricErr) }()
 
@@ -359,6 +392,8 @@ func (c *Client) doDelete(ctx context.Context, path string) error {
 	return c.parseResponse(resp)
 }
 
+var failureMarker = []byte("failure")
+
 func (c *Client) parseResponse(resp *http.Response) error {
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -366,6 +401,9 @@ func (c *Client) parseResponse(resp *http.Response) error {
 	}
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if !bytes.Contains(data, failureMarker) {
+			return nil
+		}
 		var structured map[string]interface{}
 		if err := json.Unmarshal(data, &structured); err == nil {
 			if result, ok := structured["result"].(string); ok && result == "failure" {

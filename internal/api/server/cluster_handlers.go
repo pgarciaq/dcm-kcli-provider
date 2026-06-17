@@ -154,7 +154,7 @@ func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersReq
 
 	sort.Slice(storeClusters, func(i, j int) bool { return storeClusters[i].CreatedAt.After(storeClusters[j].CreatedAt) })
 
-	kwebMap := make(map[string]kweb.ClusterInfo)
+	kwebMap := make(map[string]kweb.ClusterInfo, len(kwebClusters))
 	for _, cl := range kwebClusters {
 		kwebMap[cl.Name] = cl
 	}
@@ -365,7 +365,7 @@ func joinSupportedTypes() string {
 func entryToCluster(entry store.ResourceEntry) Cluster {
 	name := strings.TrimPrefix(entry.KcliName, dcmPrefix)
 	status := entry.Status
-	path := fmt.Sprintf("clusters/%s", entry.ID)
+	path := "clusters/" + entry.ID
 	st := ClusterSpecServiceTypeCluster
 	return Cluster{
 		Id:     &entry.ID,
