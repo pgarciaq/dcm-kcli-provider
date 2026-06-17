@@ -90,6 +90,24 @@ var _ = Describe("Reconciliation (restart recovery)", func() {
 		Expect(mon.OrphanCount()).To(Equal(1))
 	})
 
+	It("maps mixed-case kweb VM statuses to canonical DCM states", func() {
+		oldCreated := time.Now().Add(-1 * time.Hour)
+		cases := []struct {
+			kwebStatus string
+			expected   string
+		}{
+			{"Up", "RUNNING"},
+			{"DOWN", "STOPPED"},
+			{"Running", "RUNNING"},
+			{"ShutOff", "STOPPED"},
+			{"PAUSED", "PAUSED"},
+		}
+		for _, tc := range cases {
+			got := monitor.MapVMStatus(tc.kwebStatus, oldCreated)
+			Expect(got).To(Equal(tc.expected), "kweb status %q", tc.kwebStatus)
+		}
+	})
+
 	// C-87: On restart with empty store (store loss), all kweb resources logged as orphans, SP still works
 	It("handles empty store (store loss): logs orphans for all dcm- resources", func() {
 		kwebMock.setVMs([]kweb.VMInfo{

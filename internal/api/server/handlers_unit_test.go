@@ -1177,6 +1177,34 @@ var _ = Describe("Handlers", func() {
 		Expect(resp["status"]).To(Equal("RUNNING"))
 	})
 
+	It("returns 409 when VM ?id= matches existing cluster entry", func() {
+		storeMock.Put(store.ResourceEntry{ID: "shared-id", KcliName: "dcm-shared-cl", Type: "cluster", Status: "ACTIVE"})
+		kwebMock.createVMErr = errors.New("kweb should not be called")
+		body := vmBody("shared-vm", "fedora-39", withMemory("4GB"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/vms?id=shared-id", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(409))
+		var pd map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &pd)
+		Expect(pd["detail"].(string)).To(ContainSubstring("already exists as a cluster"))
+	})
+
+	It("returns 409 when cluster ?id= matches existing VM entry", func() {
+		storeMock.Put(store.ResourceEntry{ID: "shared-id-2", KcliName: "dcm-shared-vm", Type: "vm", Status: "RUNNING"})
+		kwebMock.createClusterErr = errors.New("kweb should not be called")
+		body := clusterBody("shared-cl", withClusterType("k3s"))
+		req := httptest.NewRequest(http.MethodPost, "/api/v1alpha1/clusters?id=shared-id-2", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(409))
+		var pd map[string]interface{}
+		json.Unmarshal(w.Body.Bytes(), &pd)
+		Expect(pd["detail"].(string)).To(ContainSubstring("already exists as a vm"))
+	})
+
 	It("idempotent cluster create: returns existing resource when ?id= matches store entry", func() {
 		storeMock.Put(store.ResourceEntry{ID: "idem-cl-1", KcliName: "dcm-idem-cl-1", Type: "cluster", Status: "ACTIVE"})
 		kwebMock.createClusterErr = errors.New("kweb should not be called")

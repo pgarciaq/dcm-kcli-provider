@@ -24,6 +24,12 @@ import (
 func (s *StrictServerImpl) CreateCluster(ctx context.Context, req CreateClusterRequestObject) (CreateClusterResponseObject, error) {
 	if req.Params.Id != nil && *req.Params.Id != "" {
 		if existing, err := s.store.Get(*req.Params.Id); err == nil {
+			if existing.Type != "cluster" {
+				return CreateClusterdefaultApplicationProblemPlusJSONResponse{
+					Body:       problemError(409, fmt.Sprintf("ID '%s' already exists as a %s", *req.Params.Id, existing.Type)),
+					StatusCode: 409,
+				}, nil
+			}
 			cl := entryToCluster(*existing)
 			return CreateCluster201JSONResponse(cl), nil
 		}
@@ -152,7 +158,12 @@ func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersReq
 		}, nil
 	}
 
-	sort.Slice(storeClusters, func(i, j int) bool { return storeClusters[i].CreatedAt.After(storeClusters[j].CreatedAt) })
+	sort.SliceStable(storeClusters, func(i, j int) bool {
+		if storeClusters[i].CreatedAt.Equal(storeClusters[j].CreatedAt) {
+			return storeClusters[i].ID < storeClusters[j].ID
+		}
+		return storeClusters[i].CreatedAt.After(storeClusters[j].CreatedAt)
+	})
 
 	kwebMap := make(map[string]kweb.ClusterInfo, len(kwebClusters))
 	for _, cl := range kwebClusters {

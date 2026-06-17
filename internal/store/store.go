@@ -11,6 +11,13 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+// typeTagVM/typeTagCluster enable a fast pre-filter in List/ListByStatus:
+// entries whose raw JSON doesn't contain the type substring are skipped
+// without deserialization. This relies on json.Marshal producing canonical
+// JSON without extra whitespace. If the store format ever changes (e.g.,
+// pretty-printed or field-reordered by an external tool), the pre-filter
+// will return false negatives. The post-unmarshal entry.Type check remains
+// the authoritative filter.
 var (
 	typeTagVM      = []byte(`"type":"vm"`)
 	typeTagCluster = []byte(`"type":"cluster"`)

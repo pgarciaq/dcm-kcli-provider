@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	spmv1alpha1 "github.com/dcm-project/service-provider-manager/api/v1alpha1/provider"
@@ -48,7 +49,9 @@ type Registrar struct {
 	maxBackoff     time.Duration
 
 	startOnce sync.Once
+	cancel    context.CancelFunc
 	done      chan struct{}
+	succeeded atomic.Bool
 }
 
 func NewRegistrar(spmURL string, providerCfg ProviderConfig, logger *slog.Logger, opts ...Option) (*Registrar, error) {
@@ -77,6 +80,8 @@ func NewRegistrar(spmURL string, providerCfg ProviderConfig, logger *slog.Logger
 
 func (r *Registrar) StartBackground(ctx context.Context) {
 	r.startOnce.Do(func() {
+		ctx, cancel := context.WithCancel(ctx)
+		r.cancel = cancel
 		go func() {
 			defer close(r.done)
 			r.run(ctx)
@@ -84,8 +89,19 @@ func (r *Registrar) StartBackground(ctx context.Context) {
 	})
 }
 
+func (r *Registrar) Stop() {
+	if r.cancel != nil {
+		r.cancel()
+	}
+	<-r.done
+}
+
 func (r *Registrar) Done() <-chan struct{} {
 	return r.done
+}
+
+func (r *Registrar) Registered() bool {
+	return r.succeeded.Load()
 }
 
 func (r *Registrar) run(ctx context.Context) {
@@ -156,10 +172,12 @@ func (r *Registrar) register(ctx context.Context) error {
 		r.logger.Info("registered new provider", "name", r.providerCfg.Name, "id", *resp.JSON201.Id)
 		metrics.RegistrationStatus.WithLabelValues(r.providerCfg.Name).Set(1)
 		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "success").Inc()
+		r.succeeded.Store(true)
 	case http.StatusOK:
 		r.logger.Info("updated existing provider", "name", r.providerCfg.Name, "id", *resp.JSON200.Id)
 		metrics.RegistrationStatus.WithLabelValues(r.providerCfg.Name).Set(1)
 		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "success").Inc()
+		r.succeeded.Store(true)
 	case http.StatusConflict:
 		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "rejected").Inc()
 		return fmt.Errorf("conflict registering provider: %s: %w", resp.ApplicationproblemJSON409.Title, errNonRetryable)
@@ -193,6 +211,7 @@ func (r *Registrar) Deregister(ctx context.Context) {
 	}
 	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
 		r.logger.Info("deregistered provider", "provider", r.providerCfg.Name)
+		metrics.RegistrationStatus.WithLabelValues(r.providerCfg.Name).Set(0)
 	} else {
 		r.logger.Warn("deregistration returned unexpected status", "provider", r.providerCfg.Name, "status", resp.StatusCode())
 	}

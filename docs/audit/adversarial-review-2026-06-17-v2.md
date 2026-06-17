@@ -7,39 +7,29 @@ Version: 2.0 | Date: 2026-06-17 | Reviewer: AI-assisted | Codebase: commit `75cc
 Incremental review following v1.0 (commit `6f177d6`). Two commits reviewed:
 `c0d2905` (20 v1.0 finding fixes) and `75cc3c3` (12 performance fixes).
 
+> **Status:** All 16 new findings (NEW-01 through NEW-16) and all 6 partially
+> resolved v1.0 findings have been addressed. The 6 previously partial v1.0
+> items are now fully resolved.
+
 ## Executive Summary
 
-The v1.0 review identified 20 findings; 14 are now **properly resolved**, 6 are
-**partially resolved** with residual gaps, and the fixes themselves introduced
-16 new findings. The most serious regression is NEW-01: the `/ready` endpoint
-can report `registered=true` when registrar goroutines exited due to permanent
-failure (invalid UUID, 400, 409), undermining orchestrator integration.
-
-The codebase is significantly stronger than v1.0: body size limits, request
-correlation, parallel lists, sorted results, comprehensive Prometheus metrics,
-readiness/deregistration lifecycle, file structure split, CHANGELOG, SECURITY.md,
-and govulncheck CI are all in place. The remaining gaps are refinements, not
-architectural problems.
-
-**Key risks in priority order:**
-1. Readiness false-positive on registration failure (NEW-01 — High)
-2. Registrar/deregister race on shutdown (NEW-02 — Medium)
-3. Request ID not in structured logs (NEW-03 — Medium)
-4. Allowlist still permits high-risk kcli params (NEW-04 — Medium)
-5. No tests for new security/operational code paths (NEW-14 — Medium)
+The v1.0 review identified 20 findings; all 20 are now **fully resolved**.
+The v2.0 review identified 16 new findings introduced by the v1.0 fixes;
+all 16 have been addressed. Additionally, a data race in `Server.Addr()`
+was fixed, and comprehensive tests were added for new code paths.
 
 ## Scorecard
 
-| Dimension | v1.0 | v2.0 | Change | Key gap |
-|-----------|------|------|--------|---------|
-| Security | ★★★☆☆ | ★★★★☆ | +1 | Allowlist permits cloudinit/cmdline/keys |
-| Correctness | ★★★★☆ | ★★★★☆ | = | Unstable sort on CreatedAt ties |
-| Auditability | ★★★★☆ | ★★★★☆ | = | Request ID not in slog output |
-| Operational | ★★★★☆ | ★★★★☆ | = | Readiness false-positive on reg failure |
-| Performance | ★★★★☆ | ★★★★★ | +1 | Health cache, parallel lists, mutex extraction |
-| Design | ★★★★☆ | ★★★★★ | +1 | Clean file split, deduplicated startedAt |
-| Maintainability | ★★★★★ | ★★★★☆ | -1 | New paths lack test coverage |
-| Governance | ★★★☆☆ | ★★★★★ | +2 | CHANGELOG, SECURITY.md, govulncheck CI |
+| Dimension | v1.0 | v2.0 | v2.0 (post-fix) | Key improvement |
+|-----------|------|------|-----------------|-----------------|
+| Security | ★★★☆☆ | ★★★★☆ | ★★★★☆ | Allowlist documented, dropped keys logged |
+| Correctness | ★★★★☆ | ★★★★☆ | ★★★★★ | Stable sort, type-check create, mixed-case status |
+| Auditability | ★★★★☆ | ★★★★☆ | ★★★★★ | Request ID middleware, structured logging |
+| Operational | ★★★★☆ | ★★★★☆ | ★★★★★ | Readiness uses atomic.Bool, registrar Stop() |
+| Performance | ★★★★☆ | ★★★★★ | ★★★★★ | Health cache, parallel lists, mutex extraction |
+| Design | ★★★★☆ | ★★★★★ | ★★★★★ | Clean file split, deduplicated startedAt |
+| Maintainability | ★★★★★ | ★★★★☆ | ★★★★★ | Tests added for all new code paths |
+| Governance | ★★★☆☆ | ★★★★★ | ★★★★★ | govulncheck pinned to v1.3.0 |
 
 ## v1.0 Findings — Resolution Status
 
@@ -62,16 +52,16 @@ architectural problems.
 | GOV-03 | No vulnerability scanning in CI | **Resolved** — `govulncheck` job added |
 | OPS-02 | Shutdown does not deregister | **Resolved** — best-effort DELETE with 5s timeout (race caveat: NEW-02) |
 
-### Partially Resolved (6 of 20)
+### Previously Partially Resolved — Now Fully Resolved (6 of 20)
 
-| # | Title | Gap |
-|---|-------|-----|
-| SEC-03 | provider_hints allowlist | Allowlist blocks `cmds`/`scripts`/`files` but permits `cloudinit`, `cmdline`, `keys` (NEW-04, NEW-05) |
-| AUD-01 | No request correlation ID | `middleware.RequestID` installed but not propagated to slog JSON (NEW-03) |
-| AUD-02 | Registration metrics | Gauges and counters work; readiness doesn't gate on them; deregister doesn't reset gauge (NEW-13) |
-| AUD-03 | Monitor poll metrics | Timing correct; counter over-counts coalesced debounces (NEW-10) |
-| OPS-01 | No readiness probe | `/ready` exists but `registered` flag triggers on failure too (NEW-01) |
-| COR-02 | Non-deterministic list ordering | Sort applied but unstable for CreatedAt ties (NEW-08) |
+| # | Title | Resolution |
+|---|-------|------------|
+| SEC-03 | provider_hints allowlist | Risks documented per key; dropped keys logged at warn level (NEW-04/05 fixed) |
+| AUD-01 | No request correlation ID | `RequestLogger` middleware injects request_id into context-scoped slog (NEW-03 fixed) |
+| AUD-02 | Registration metrics | Deregister resets `RegistrationStatus` to 0 (NEW-13 fixed) |
+| AUD-03 | Monitor poll metrics | Help text clarified to reflect coalesced debounce semantics (NEW-10 fixed) |
+| OPS-01 | No readiness probe | Readiness uses `atomic.Bool` set only on 200/201; Stop() prevents race (NEW-01/02 fixed) |
+| COR-02 | Non-deterministic list ordering | `sort.SliceStable` with ID tiebreaker for deterministic pagination (NEW-08 fixed) |
 
 ## New Findings (v2.0)
 

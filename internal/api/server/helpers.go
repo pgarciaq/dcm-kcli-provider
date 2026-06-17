@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -15,10 +16,24 @@ func resolveID(clientID *string) string {
 	return uuid.New().String()
 }
 
-// allowedKcliHintKeys defines the safe kcli parameters that may be forwarded
-// to kweb. Keys not in this set are silently dropped to prevent forwarding
-// dangerous parameters like "cmds", "scripts", or "files" that could execute
-// arbitrary commands on the hypervisor.
+// allowedKcliHintKeys defines the kcli parameters that may be forwarded to
+// kweb. Keys not in this set are dropped and logged at warn level.
+//
+// SECURITY NOTE: Some allowed keys carry elevated risk on untrusted networks:
+//   - cloudinit: arbitrary cloud-init userdata (can run scripts on the VM)
+//   - cmdline: kernel boot parameters
+//   - kernel, initrd: custom kernel/initramfs images
+//   - iso: arbitrary ISO mount
+//   - keys: SSH public key injection (also available via spec.ssh_keys)
+//   - sharedfolders: exposes host paths to the VM
+//   - yamlinventory: arbitrary kcli YAML configuration
+//
+// These are permitted because this provider targets trusted homelab networks.
+// For untrusted environments, restrict this list or add per-key validation.
+//
+// Blocked keys (not in this map): cmds, scripts, files, rhnregister,
+// networkwait, enableroot, rootpassword, and any other kcli parameter
+// that directly executes commands on the hypervisor.
 var allowedKcliHintKeys = map[string]bool{
 	"image": true, "network": true, "pool": true, "numcpus": true,
 	"memory": true, "disks": true, "nets": true, "dns": true,
@@ -54,7 +69,11 @@ func mergeKcliHints(hints *ProviderHints, params map[string]interface{}, exclude
 		skip[k] = true
 	}
 	for k, v := range m {
-		if skip[k] || !allowedKcliHintKeys[k] {
+		if skip[k] {
+			continue
+		}
+		if !allowedKcliHintKeys[k] {
+			slog.Warn("dropped disallowed provider_hints.kcli key", "key", k)
 			continue
 		}
 		if _, exists := params[k]; !exists {

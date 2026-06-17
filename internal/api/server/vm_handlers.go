@@ -21,6 +21,12 @@ import (
 func (s *StrictServerImpl) CreateVM(ctx context.Context, req CreateVMRequestObject) (CreateVMResponseObject, error) {
 	if req.Params.Id != nil && *req.Params.Id != "" {
 		if existing, err := s.store.Get(*req.Params.Id); err == nil {
+			if existing.Type != "vm" {
+				return CreateVMdefaultApplicationProblemPlusJSONResponse{
+					Body:       problemError(409, fmt.Sprintf("ID '%s' already exists as a %s", *req.Params.Id, existing.Type)),
+					StatusCode: 409,
+				}, nil
+			}
 			vm := entryToVM(*existing)
 			return CreateVM201JSONResponse(vm), nil
 		}
@@ -154,7 +160,12 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 		}, nil
 	}
 
-	sort.Slice(storeVMs, func(i, j int) bool { return storeVMs[i].CreatedAt.After(storeVMs[j].CreatedAt) })
+	sort.SliceStable(storeVMs, func(i, j int) bool {
+		if storeVMs[i].CreatedAt.Equal(storeVMs[j].CreatedAt) {
+			return storeVMs[i].ID < storeVMs[j].ID
+		}
+		return storeVMs[i].CreatedAt.After(storeVMs[j].CreatedAt)
+	})
 
 	kwebMap := make(map[string]kweb.VMInfo, len(kwebVMs))
 	for _, vm := range kwebVMs {

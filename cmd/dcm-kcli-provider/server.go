@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -42,13 +43,11 @@ type Server struct {
 	publisher  events.Publisher
 	kwebClient *kweb.Client
 	monitor    *monitor.Monitor
-	registrars []*registration.Registrar
-	listener   net.Listener
-	startedAt  time.Time
-
-	registered     chan struct{}
-	pollComplete   chan struct{}
-	registeredOnce sync.Once
+	registrars   []*registration.Registrar
+	listener     net.Listener
+	listenerAddr sync.Map // stores the listener address string once available
+	startedAt    time.Time
+	pollComplete chan struct{}
 }
 
 func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
@@ -56,7 +55,6 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 		cfg:          cfg,
 		logger:       logger,
 		startedAt:    time.Now(),
-		registered:   make(chan struct{}),
 		pollComplete: make(chan struct{}),
 	}
 
@@ -156,7 +154,19 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	s.registrars = []*registration.Registrar{vmRegistrar, clusterRegistrar}
 
 	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version, apiserver.WithLogger(logger), apiserver.WithStartedAt(s.startedAt))
-	strictHandler := apiserver.NewStrictHandler(impl, nil)
+	strictHandler := apiserver.NewStrictHandlerWithOptions(impl, nil, apiserver.StrictHTTPServerOptions{
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				handlers.WriteRFC7807(w, http.StatusRequestEntityTooLarge, "Request Entity Too Large", "Request body exceeds the maximum allowed size.")
+				return
+			}
+			handlers.WriteRFC7807(w, http.StatusBadRequest, "Bad Request", err.Error())
+		},
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			handlers.WriteRFC7807(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		},
+	})
 
 	swagger, err := apiv1alpha1.GetSwagger()
 	if err != nil {
@@ -171,6 +181,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	r.Use(handlers.RequestLogger(logger))
 	r.Use(handlers.PanicRecovery(logger))
 	r.Use(middleware.Logger)
 	r.Use(metrics.Middleware)
@@ -207,6 +218,7 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", s.cfg.ListenAddress, err)
 	}
+	s.listenerAddr.Store("addr", s.listener.Addr().String())
 	s.logger.Info("HTTP server listening", "address", s.listener.Addr().String())
 
 	go func() { _ = s.httpServer.Serve(s.listener) }()
@@ -237,14 +249,6 @@ func (s *Server) Start(ctx context.Context) error {
 
 	for _, reg := range s.registrars {
 		reg.StartBackground(ctx)
-	}
-
-	for _, reg := range s.registrars {
-		r := reg
-		go func() {
-			<-r.Done()
-			s.registeredOnce.Do(func() { close(s.registered) })
-		}()
 	}
 
 	go func() {
@@ -287,6 +291,10 @@ func (s *Server) shutdown(monCancel context.CancelFunc, wg *sync.WaitGroup) {
 		s.logger.Warn("shutdown timeout exceeded, some goroutines may still be running")
 	}
 
+	for _, reg := range s.registrars {
+		reg.Stop()
+	}
+
 	// Best-effort deregistration
 	deregCtx, deregCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer deregCancel()
@@ -322,8 +330,8 @@ func (s *Server) selfProbe(ctx context.Context) bool {
 }
 
 func (s *Server) Addr() string {
-	if s.listener != nil {
-		return s.listener.Addr().String()
+	if v, ok := s.listenerAddr.Load("addr"); ok {
+		return v.(string)
 	}
 	return ""
 }
@@ -334,11 +342,12 @@ func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
 		kwebOK = true
 	}
 
-	registered := false
-	select {
-	case <-s.registered:
-		registered = true
-	default:
+	registered := true
+	for _, reg := range s.registrars {
+		if !reg.Registered() {
+			registered = false
+			break
+		}
 	}
 
 	polled := false

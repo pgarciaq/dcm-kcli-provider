@@ -2,33 +2,31 @@
 
 ## Date and Scope
 
-**Date:** 2026-06-17
-**Codebase:** commit `c0d2905` (main)
+**Date:** 2026-06-17 (v2, post-adversarial-review fixes)
+**Codebase:** HEAD of main (post v2 adversarial fixes: NEW-01 through NEW-16)
+**Prior audit:** Same day, commit `c0d2905` — all 12 actionable findings (M1–M11, M15) were implemented
 **Scope:** Full codebase — API handlers, kweb client, bbolt store, monitor loop,
-NATS publisher, metrics middleware, registration
-
-> **Status:** All 12 actionable findings (M1–M11, M15) have been implemented.
-> 3 findings (M12, M13, M14) deferred as not worth the complexity at homelab scale.
+NATS publisher, metrics middleware, registration, new security/ops code
 
 ## Overall Assessment
 
-The dcm-kcli-provider is an **I/O-bound** service. Its critical paths are
-dominated by network round-trips to kweb (HTTP) and NATS publishes, not by CPU
-or memory. At the designed scale (~200 VMs, ~50 clusters), the codebase
-performs well. The recent parallel list optimization (PERF-01) addressed the
-largest latency bottleneck in the API layer.
+The dcm-kcli-provider remains **I/O-bound**. The v2 adversarial fixes added
+correctness and observability code with minimal performance impact. One prior
+optimization (M6: remove `strings.ToLower`) was intentionally reverted for
+correctness (NEW-07: tolerate mixed-case kweb statuses) — this is the only
+regression and has a zero-allocation fix via `strings.EqualFold`.
 
-**Estimated steady-state resource profile (200 VMs, 50 clusters, 30s poll):**
+**Steady-state resource profile (200 VMs, 50 clusters, 30s poll):**
 
 | Metric | Estimate |
 |--------|----------|
 | RSS | ~15–25 MB (Go runtime + bbolt mmap + HTTP buffers) |
 | CPU | <1% (idle between polls, trivial per-request work) |
 | Goroutines | 6 steady-state (main, HTTP, monitor, 2 registrars, signal) |
-| Poll I/O | 3 kweb GETs + 2 bbolt scans + 0–N NATS publishes per 30s |
+| Poll I/O | 3 kweb GETs (serial) + 2 bbolt scans + 0–N NATS publishes per 30s |
 | bbolt file | <1 MB at 250 entries × ~150 bytes/entry |
 
-No P0 (critical) findings. The codebase is well-matched to its homelab scope.
+No P0 (critical) findings. Two P1 items are actionable quick wins.
 
 ## What Is Working Well (Do Not Regress)
 
@@ -41,186 +39,205 @@ No P0 (critical) findings. The codebase is well-matched to its homelab scope.
 4. **Name index** — `FindByKcliName` uses a bbolt secondary index bucket
    (`name_index`) for O(1) lookups, not full scans.
 5. **Pre-capped slices** — `make([]VM, 0, len(storeVMs))` in list handlers and
-   `make([]string, 0, len(profiles))` in profile parsing avoid realloc.
+   store `Stats().KeyN` pre-caps avoid realloc.
 6. **Metrics route pattern** — Uses `chi.RouteContext().RoutePattern()` instead
    of `r.URL.Path` to avoid unbounded Prometheus label cardinality.
 7. **Response body limit** — `io.LimitReader(resp.Body, 10<<20)` caps kweb
    response reads at 10 MB.
 8. **Orphan deduplication** — `seenOrphans` map prevents repeated logging/counting
    of the same orphan across poll cycles.
+9. **NATS publish outside monitor mutex** — (M1 fix) Events collected under lock,
+   published after releasing lock.
+10. **Map size hints** — (M4 fix) All kweb maps allocated with `len(kwebVMs)`.
+11. **`fmt.Sprintf` → string concat** — (M3 fix) `"vms/" + entry.ID` in entry builders.
+12. **`MaxIdleConnsPerHost: 10`** — (M10 fix) kweb HTTP transport reuses connections.
+13. **`bytes.Contains` pre-filter** — (M2/M11 fix) Store list and parseResponse
+    skip full unmarshal when pattern absent.
+14. **Health cache (5s TTL)** — (M7 fix) Deduplicates kweb health checks.
+15. **Orphan batch detection** — (M15 fix) Uses existing store data, no per-VM
+    bbolt transactions.
+
+## Prior Audit Status
+
+| ID | Status | Notes |
+|----|--------|-------|
+| M1 | ✅ Implemented | NATS publish outside lock |
+| M2 | ✅ Implemented (Option C) | `bytes.Contains` pre-filter |
+| M3 | ✅ Implemented | String concat |
+| M4 | ✅ Implemented | Map size hints |
+| M5 | ✅ Implemented | `Stats().KeyN` pre-cap |
+| M6 | ⚠️ **Reverted** | `strings.ToLower` re-added for NEW-07 correctness (see P1-01) |
+| M7 | ✅ Implemented | Health cache |
+| M8 | ✅ Implemented | Context passed to `flushOne` |
+| M9 | ✅ Implemented | Publisher checks `ctx.Err()` |
+| M10 | ✅ Implemented | Transport tuning |
+| M11 | ✅ Implemented | `bytes.Contains` fast-path |
+| M15 | ✅ Implemented | Orphan batch detection |
+| M12 | Deferred | `sync.Pool` for statusWriter — not needed at <10 req/s |
+| M13 | Deferred | UUID pool — not needed at homelab event rates |
+| M14 | Deferred | Binary bbolt encoding — not needed at <500 entries |
 
 ## Findings by Priority
 
 ### P1 — High
 
-#### M1: NATS publish under monitor mutex
+#### P1-01: `strings.ToLower` allocation in MapVMStatus (M6 regression)
 
 | Field | Detail |
 |-------|--------|
-| **Location** | `internal/monitor/monitor.go:216` (`publishWithDebounce` → `flushOne`) and L245–254 (`flushPending`) |
-| **Current state** | `flushOne` is called while holding `m.mu`. `flushOne` calls `publisher.PublishVMEvent` / `PublishClusterEvent` which does NATS `conn.Publish`. If NATS is slow or buffering, the mutex is held for the duration, blocking `pollVMs`, `pollClusters`, `refreshProfiles`, and `Profiles()` (used by API). |
-| **Proposed fix** | Collect events to flush into a local slice under the lock, release the lock, then publish. |
-| **Expected impact** | Reduces worst-case mutex hold from `O(NATS_latency × pending_events)` to `O(len(pending))` (microseconds). Prevents monitor stalls when NATS is slow. |
-| **Risk** | Low. Event ordering preserved (same goroutine). Race-free since only the monitor goroutine writes `pending`. |
+| **Location** | `internal/monitor/status.go:14` |
+| **Current state** | `strings.ToLower(kwebStatus)` allocates a new string on every call. Called once per VM per poll cycle (~200 allocations/30s). Was removed in M6, re-added for NEW-07 correctness (tolerate mixed-case). |
+| **Proposed fix** | Replace the `switch strings.ToLower(s)` with per-case `strings.EqualFold` checks. Zero allocation for ASCII comparisons. |
+| **Expected impact** | Eliminates ~200 string allocations per poll cycle. |
+| **Risk** | None. `strings.EqualFold` is case-insensitive without allocation. |
+| **Effort** | S (minutes) |
+
+#### P1-02: Monitor polls kweb sequentially (3 serial RTTs)
+
+| Field | Detail |
+|-------|--------|
+| **Location** | `internal/monitor/monitor.go:97–106` |
+| **Current state** | Each 30s cycle: `refreshProfiles` → `pollVMs` → `pollClusters` → `flushPending` → `detectVMOrphans`. Three kweb GETs run in sequence. Under LAN conditions (~5ms RTT), this adds ~15ms vs ~5ms if parallelized. |
+| **Proposed fix** | Run `refreshProfiles`, `pollVMs`, and `pollClusters` concurrently using `errgroup`. The rate limiter will naturally sequence them if burst is exhausted, but under normal conditions (3 tokens needed, burst=20) all three proceed immediately. |
+| **Expected impact** | Reduces poll cycle wall-clock by ~10ms (2 RTTs). More significant on higher-latency networks. |
+| **Risk** | Low. Each function writes to independent store buckets. bbolt serializes writes naturally. |
 | **Effort** | S (hours) |
-
-#### M2: Store `List` full-scan JSON deserializes every entry
-
-| Field | Detail |
-|-------|--------|
-| **Location** | `internal/store/store.go:146–157` (`List`), L161–175 (`ListByStatus`), L238–250 (`ListAll`) |
-| **Current state** | `List("vm")` iterates the entire `resources` bucket, calling `json.Unmarshal` on every entry (VMs and clusters alike), then filters by `entry.Type`. At 250 entries × ~150 bytes, this is ~250 `json.Unmarshal` calls for a type filter that discards ~50 of them. |
-| **Proposed fix** | **Option A (simple):** Add a `type_` prefix to bbolt keys (e.g., `vm:uuid`, `cluster:uuid`) and use `Cursor.Seek("vm:")` + prefix iteration. **Option B (simpler):** Add separate buckets per resource type. **Option C (cheapest):** Keep current structure but pre-filter on a raw byte check before unmarshalling (e.g., `bytes.Contains(v, []byte(`"type":"vm"`))`). |
-| **Expected impact** | Option A/B: eliminates ~50% of unnecessary unmarshals. Option C: eliminates marshal overhead for wrong-type entries. At 250 entries this saves ~125 unmarshals × 2 per monitor cycle + per list API call. |
-| **Risk** | Option A/B require a store migration. Option C is fragile if JSON field order changes. |
-| **Effort** | Option C: S (hours). Option A/B: M (days, needs migration). |
 
 ### P2 — Medium
 
-#### M3: `fmt.Sprintf` in per-entry response construction
+#### P2-01: RequestLogger allocates child slog.Logger per request
 
 | Field | Detail |
 |-------|--------|
-| **Location** | `internal/api/server/vm_handlers.go:306` (`entryToVM`), `cluster_handlers.go:368` (`entryToCluster`) |
-| **Current state** | `fmt.Sprintf("vms/%s", entry.ID)` / `fmt.Sprintf("clusters/%s", entry.ID)` allocates a new string per entry in list responses. At 200 entries, that's 200 `Sprintf` calls per list. |
-| **Proposed fix** | Use string concatenation: `"vms/" + entry.ID`. The Go compiler optimizes 2-operand `+` to a single allocation, avoiding `fmt.Sprintf` reflection overhead. |
-| **Expected impact** | ~3× faster per-path string construction. Minor in absolute terms (~200µs saved per 200-item list). |
-| **Risk** | None. |
+| **Location** | `internal/handlers/request_logger.go:17–21` |
+| **Current state** | `base.With("request_id", reqID)` creates a new `slog.Logger` instance per request. Currently, handler code uses `s.logger` directly, not `LoggerFromContext(ctx)`, so the injected logger is unused in hot paths — pure overhead. |
+| **Proposed fix** | **Option A:** Remove RequestLogger middleware; store only the `request_id` string in context; use `slog.With("request_id", id)` at log sites that need it. **Option B:** Wire all handler logging through `LoggerFromContext(ctx)` to justify the allocation. |
+| **Expected impact** | Eliminates 1 heap allocation per request (slog.Logger + attrs). |
+| **Risk** | Low. |
+| **Effort** | S |
+
+#### P2-02: `sort.SliceStable` allocates O(n) auxiliary memory
+
+| Field | Detail |
+|-------|--------|
+| **Location** | `internal/api/server/vm_handlers.go:163–168`, `cluster_handlers.go:161–166` |
+| **Current state** | v2 fix uses `sort.SliceStable` with composite key (CreatedAt, ID) for deterministic pagination. Stable sort allocates an auxiliary slice of ~n pointers. |
+| **Proposed fix** | Use `sort.Slice` (unstable) with the same composite key. Since the secondary key (ID) is unique, the sort produces identical results regardless of stability — the comparator is a total order. |
+| **Expected impact** | Eliminates O(n) scratch allocation per list. |
+| **Risk** | None — total ordering means unstable sort produces deterministic results. |
 | **Effort** | S (minutes) |
 
-#### M4: Maps allocated without size hints in hot paths
+#### P2-03: Health cache stampede on TTL expiry
 
 | Field | Detail |
 |-------|--------|
-| **Location** | `vm_handlers.go:159` `make(map[string]kweb.VMInfo)`, `cluster_handlers.go:157` `make(map[string]kweb.ClusterInfo)`, `monitor.go:126` `make(map[string]kweb.VMInfo)`, `monitor.go:164` `make(map[string]kweb.ClusterInfo)` |
-| **Current state** | Maps created without capacity hints cause rehashing as entries are added. With 200 VMs, the VM map rehashes ~8 times (0→1→2→4→8→16→32→64→128→256). |
-| **Proposed fix** | `make(map[string]kweb.VMInfo, len(kwebVMs))` in all four locations. |
-| **Expected impact** | Eliminates map rehashing. Saves ~8 allocations per list/poll at 200 entries. |
-| **Risk** | None. |
-| **Effort** | S (minutes) |
-
-#### M5: Store `List` slice grows without capacity hint
-
-| Field | Detail |
-|-------|--------|
-| **Location** | `internal/store/store.go:145,153` (`List`), L162,170 (`ListByStatus`), L239,246 (`ListAll`) |
-| **Current state** | `var entries []ResourceEntry` starts at nil; `entries = append(entries, entry)` grows with amortized doubling. For 200 VMs, this causes ~8 grow-and-copy cycles. |
-| **Proposed fix** | Cannot pre-size without knowing count (bbolt `ForEach` doesn't expose count). Use `bolt.Bucket.Stats().KeyN` to get key count: `entries := make([]ResourceEntry, 0, b.Stats().KeyN)`. |
-| **Expected impact** | Eliminates slice reallocations during full scans. Saves ~8 allocations per list. |
-| **Risk** | `Stats().KeyN` counts all keys in the bucket, not just matching type. Over-allocates for `List(type)`, but wastes only memory (no copies). |
-| **Effort** | S (minutes) |
-
-#### M6: `strings.ToLower` allocation in VM status mapping
-
-| Field | Detail |
-|-------|--------|
-| **Location** | `internal/monitor/status.go:11` (`MapVMStatus`) |
-| **Current state** | `strings.ToLower(kwebStatus)` allocates a new string on every call, even when `kwebStatus` is already lowercase (common case from kweb: "up", "down", "running"). Called once per VM per poll cycle. |
-| **Proposed fix** | Check if already lowercase first: add fast-path `if kwebStatus == strings.ToLower(kwebStatus)` — no, that still allocates. Better: use a case-insensitive switch via `strings.EqualFold` or simply document that kweb always returns lowercase (it does) and remove the `ToLower`. |
-| **Expected impact** | Eliminates 200 string allocations per poll cycle. |
-| **Risk** | If kweb ever returns mixed-case status strings, the mapping would miss. Mitigate by adding a default fallback log. |
-| **Effort** | S (minutes) |
-
-#### M7: Health check called twice on `/ready` + `/health` scrape
-
-| Field | Detail |
-|-------|--------|
-| **Location** | `cmd/dcm-kcli-provider/server.go:333` (`readinessHandler`), L382 (`rootHealthHandler`) |
-| **Current state** | Both `/ready` and `/health` independently call `s.kwebClient.CheckHealth(ctx)`. If a monitoring system scrapes both endpoints (common pattern), kweb gets 2 health-check HTTP requests per scrape interval instead of 1. |
-| **Proposed fix** | Cache the health result for a short TTL (e.g., 5 seconds) using an `atomic.Value` + timestamp. The monitor already polls kweb every 30s; health probes could piggyback on that. |
-| **Expected impact** | Halves kweb health-check traffic under dual-probe scraping. Reduces rate-limiter token consumption by 1 req per scrape. |
-| **Risk** | Stale health status for up to 5s. Acceptable for liveness/readiness probes. |
-| **Effort** | S (hours) |
-
-#### M8: `context.Background()` in NATS publish during shutdown
-
-| Field | Detail |
-|-------|--------|
-| **Location** | `internal/monitor/monitor.go:236–238` (`flushOne`) |
-| **Current state** | NATS publishes use `context.Background()`, meaning they cannot be cancelled during shutdown. If NATS is unreachable, `flushOne` blocks until the NATS client timeout (default 2s per publish), delaying shutdown by `O(pending_events × 2s)`. |
-| **Proposed fix** | Pass the monitor's `ctx` through to `flushOne` and use it for publish calls. The publisher interface already accepts `context.Context` (currently ignored — see M9). |
-| **Expected impact** | Prevents shutdown delays when NATS is down. |
-| **Risk** | Low. Pending events that couldn't publish are lost (acceptable — they're best-effort status updates). |
-| **Effort** | S (minutes) |
-
-#### M9: Publisher ignores context
-
-| Field | Detail |
-|-------|--------|
-| **Location** | `internal/events/publisher.go:70,81` (`PublishVMEvent`, `PublishClusterEvent`) |
-| **Current state** | Both methods accept `context.Context` but ignore it. The NATS `conn.Publish` call is synchronous (writes to buffer, does not block on network). However, if the write buffer is full, it blocks until flushed. No way to cancel. |
-| **Proposed fix** | Wrap the publish in a `select` on `ctx.Done()` with the publish in a goroutine, or use `nats.PublishMsg` with a flush timeout. Since `conn.Publish` is typically non-blocking (buffered), this is low priority. |
-| **Expected impact** | Enables cancellation of stuck publishes during shutdown. |
+| **Location** | `internal/kweb/client.go:265–284` |
+| **Current state** | When 5s TTL expires, concurrent callers (`/health`, `/ready`, API health) all miss cache and each independently calls kweb. |
+| **Proposed fix** | Use `golang.org/x/sync/singleflight` to deduplicate concurrent uncached health checks. |
+| **Expected impact** | Collapses N concurrent cache-miss health checks to 1 kweb request. |
 | **Risk** | Low. |
 | **Effort** | S (hours) |
 
-#### M10: HTTP transport uses default `MaxIdleConnsPerHost` (2)
+#### P2-04: `lastPublish` debounce map never pruned
 
 | Field | Detail |
 |-------|--------|
-| **Location** | `internal/kweb/client.go:74–76` |
-| **Current state** | The kweb HTTP client uses `http.DefaultTransport` which limits idle connections per host to 2. During a poll cycle, the monitor makes 3 sequential requests to the same kweb host. Under concurrent API+monitor load, connection reuse is limited. |
-| **Proposed fix** | Set a custom transport: `&http.Transport{MaxIdleConnsPerHost: 10}`. |
-| **Expected impact** | Better connection reuse under concurrent load. Eliminates TCP handshake overhead for 3rd+ concurrent request to kweb. |
-| **Risk** | None. |
+| **Location** | `internal/monitor/monitor.go:40,211` |
+| **Current state** | `lastPublish[id]` is set on every publish; entries are never deleted when resources are removed. Over months with VM/cluster churn, the map grows unboundedly with historical IDs (~48 bytes per entry: UUID string + time.Time). |
+| **Proposed fix** | Delete `lastPublish[id]` when the monitor detects resource deletion (in `pollVMs`/`pollClusters` delete paths). |
+| **Expected impact** | Prevents unbounded memory growth. At 10 creates/day × 365 days = ~175 KB wasted. |
+| **Risk** | Low. Debounce window resets correctly for recreated IDs. |
 | **Effort** | S (minutes) |
+
+#### P2-05: GetCluster fetches and parses kubeconfig on every request
+
+| Field | Detail |
+|-------|--------|
+| **Location** | `internal/api/server/cluster_handlers.go:226–236, 294–331` |
+| **Current state** | For ACTIVE clusters: HTTP GET to kweb for kubeconfig, base64 encode, YAML unmarshal to extract API endpoint — all per `GET /clusters/{id}` request. |
+| **Proposed fix** | Cache the kubeconfig + extracted endpoint in the store entry when the monitor first detects ACTIVE status. Serve from cache on GET. Invalidate when status changes away from ACTIVE. |
+| **Expected impact** | Eliminates 1 kweb RTT + YAML parse + base64 encode per GetCluster call. |
+| **Risk** | Medium — stale kubeconfig if cluster rotates certs. Add TTL-based invalidation. |
+| **Effort** | M (days) |
+
+#### P2-06: Duplicate access logging middleware
+
+| Field | Detail |
+|-------|--------|
+| **Location** | `cmd/dcm-kcli-provider/server.go:184–186` |
+| **Current state** | Both `handlers.RequestLogger` (slog child) and chi `middleware.Logger` (text access log) are installed. Every request pays for two log writes — one structured (unused), one text. |
+| **Proposed fix** | Remove `middleware.Logger`. The structured `RequestLogger` provides the same information. If text logging is still desired, write a single structured access log in `RequestLogger` on response completion. |
+| **Expected impact** | Eliminates 1 formatted string write + buffer allocation per request. |
+| **Risk** | Low. |
+| **Effort** | S (minutes) |
+
+#### P2-07: `Profiles()` copies entire profile slice per VM create
+
+| Field | Detail |
+|-------|--------|
+| **Location** | `internal/monitor/monitor.go:67–72`, used from `vm_handlers.go:38–46` |
+| **Current state** | `Profiles()` locks mutex, allocates a new slice, copies all profile names, returns copy. CreateVM then linear-scans the copy to validate the requested profile. Profiles rarely change (refreshed every 30s from kweb). |
+| **Proposed fix** | Add `HasProfile(name string) bool` method that checks under lock without copying: `m.mu.RLock(); _, ok := m.profileMap[name]; m.mu.RUnlock(); return ok`. Store profiles as `map[string]struct{}` in addition to the slice. |
+| **Expected impact** | Eliminates O(profiles) copy + scan per create. |
+| **Risk** | None. |
+| **Effort** | S (hours) |
 
 ### P3 — Low
 
-#### M11: `parseResponse` deserializes all 2xx bodies to check for `result: failure`
+#### P3-01: `WriteRFC7807` allocates `map[string]interface{}`
 
 | Field | Detail |
 |-------|--------|
-| **Location** | `internal/kweb/client.go:362–383` |
-| **Current state** | On every successful POST/DELETE response, `parseResponse` reads the full body, deserializes it into `map[string]interface{}`, and checks for `result: "failure"`. This is a kweb quirk (it returns 200 with `{"result":"failure"}` for some errors). |
-| **Proposed fix** | Check for the string `"failure"` in the raw bytes first: `if !bytes.Contains(data, []byte("failure")) { return nil }`. Only deserialize if the raw check matches. |
-| **Expected impact** | Avoids JSON unmarshal on ~95% of successful responses. Saves one `map[string]interface{}` allocation per create/delete. |
-| **Risk** | If the word "failure" appears in a legitimate response field value, it would trigger a false positive — but then the full parse would correctly determine it's not `result: "failure"`. |
+| **Location** | `internal/handlers/body_limit.go:21–26` |
+| **Current state** | Builds a map per error response and encodes to JSON. |
+| **Proposed fix** | Use a typed struct: `type problemDetail struct { Type string; Title string; Status int; Detail string }`. Avoids map boxing. |
+| **Expected impact** | 1 map allocation per error response eliminated. Cold path. |
+| **Risk** | None. |
 | **Effort** | S (minutes) |
 
-#### M12: `statusWriter` heap-escapes on every request
+#### P3-02: `MaxBodySize` wraps body on all methods including GET
 
 | Field | Detail |
 |-------|--------|
-| **Location** | `internal/metrics/metrics.go:87` |
-| **Current state** | `&statusWriter{ResponseWriter: w, code: http.StatusOK}` escapes to heap because `w` is an interface. This is one allocation per HTTP request. |
-| **Proposed fix** | Use `sync.Pool` for `statusWriter` recycling. However, at homelab request rates (<10 req/s), the GC pressure is negligible. |
-| **Expected impact** | Eliminates 1 heap allocation per request. Negligible at <10 req/s. |
-| **Risk** | `sync.Pool` complexity for minimal gain. |
-| **Effort** | S (minutes), but not worth doing at current scale. |
+| **Location** | `internal/handlers/body_limit.go`, wired in `server.go:189` |
+| **Current state** | `http.MaxBytesReader` wraps body on every request, including GETs (which have no body). Overhead is one struct wrapper — cheap but unnecessary. |
+| **Proposed fix** | Apply only to POST/PUT/PATCH/DELETE methods. |
+| **Expected impact** | Eliminates 1 wrapper allocation on GET/list/health requests. |
+| **Risk** | None. |
+| **Effort** | S (minutes) |
 
-#### M13: `uuid.New().String()` in CloudEvent publish
-
-| Field | Detail |
-|-------|--------|
-| **Location** | `internal/events/publisher.go:103` |
-| **Current state** | Each NATS publish generates a new UUID v4 (`uuid.New().String()` = crypto/rand read + hex encode + string alloc). At homelab scale, this is ~0–10 publishes per poll cycle. |
-| **Proposed fix** | Not worth optimizing. UUID generation is ~300ns. Could pre-allocate a pool, but complexity isn't justified. |
-| **Expected impact** | Negligible. |
-| **Risk** | N/A. |
-| **Effort** | N/A — defer. |
-
-#### M14: `json.Marshal`/`json.Unmarshal` for small bbolt entries
+#### P3-03: `mergeKcliHints` allocates skip map on every create
 
 | Field | Detail |
 |-------|--------|
-| **Location** | `internal/store/store.go:118,136,149,166,198,202,243` |
-| **Current state** | `ResourceEntry` is a 5-field struct (~150 bytes JSON). Every store read/write calls `json.Marshal` or `json.Unmarshal`. At 250 entries × 2 full scans per poll, that's ~500 unmarshal calls/cycle. |
-| **Proposed fix** | **Option A:** Use a binary encoding (e.g., `encoding/gob`, `msgpack`) — ~3× faster for small structs. **Option B:** Use a fixed-size binary format (manual encoding) — ~10× faster but brittle. |
-| **Expected impact** | ~1.5ms saved per poll cycle (500 × 3µs per unmarshal). Negligible in absolute terms. |
-| **Risk** | Existing data migration needed. Debugging harder without human-readable store format. |
-| **Effort** | M (days). Not worth it at current scale. |
+| **Location** | `internal/api/server/helpers.go:67–70` |
+| **Current state** | `make(map[string]bool, len(excludeKeys))` per create. Typically 1–2 exclude keys. |
+| **Proposed fix** | For 1–2 keys, use inline string comparison instead of map. |
+| **Expected impact** | 1 small map allocation per create eliminated. Negligible at create rate. |
+| **Risk** | None. |
+| **Effort** | S (minutes) |
 
-#### M15: Orphan detection issues per-VM bbolt transactions
+#### P3-04: Create handler params map without size hint
 
 | Field | Detail |
 |-------|--------|
-| **Location** | `internal/monitor/monitor.go:272` (`detectVMOrphans`) |
-| **Current state** | For each `dcm-*` VM in kweb's list, a separate `FindByKcliName` View transaction is opened. With 200 VMs, ~200 of which start with `dcm-`, that's ~200 separate bbolt read transactions. |
-| **Proposed fix** | Batch the check: call `store.ListAll()` once (already done in `pollVMs`), build a `map[string]bool` of known kcli names, then iterate kweb VMs and check the map. |
-| **Expected impact** | Reduces 200 bbolt transactions to 0 (reuses data already fetched in `pollVMs`). |
-| **Risk** | Low. The store data is already available from `pollVMs`. |
-| **Effort** | S (hours) |
+| **Location** | `vm_handlers.go:55`, `cluster_handlers.go:56` |
+| **Current state** | `params := map[string]interface{}{}` grows via rehashing. |
+| **Proposed fix** | `make(map[string]interface{}, 8)` (typical param count). |
+| **Expected impact** | 1–2 fewer map reallocations per create. |
+| **Risk** | None. |
+| **Effort** | S (minutes) |
+
+#### P3-05: OpenAPI validation runs on health endpoints
+
+| Field | Detail |
+|-------|--------|
+| **Location** | `cmd/dcm-kcli-provider/server.go:190–195` |
+| **Current state** | `OapiRequestValidatorWithOptions` validates every request, including GET `/vms/health` and `/clusters/health`. These simple GETs don't need schema validation. |
+| **Proposed fix** | Add health paths to the validator's `Skipper` function. |
+| **Expected impact** | Eliminates schema validation CPU on health probes. |
+| **Risk** | None for parameterless GETs. |
+| **Effort** | S (minutes) |
 
 ## Deferred Items — Revisit Triggers
 
@@ -231,6 +248,10 @@ No P0 (critical) findings. The codebase is well-matched to its homelab scope.
 | D3 | Separate bbolt buckets per type (M2 Option B) | Resource count exceeds 500 or store list latency exceeds 50ms |
 | D4 | HTTP/2 to kweb | kweb adds HTTP/2 support |
 | D5 | Streaming JSON responses | List response sizes exceed 1 MB |
+| D6 | Async NATS publisher with channel buffer | Event rate exceeds 50/s or NATS latency exceeds 100ms |
+| D7 | Batch monitor store writes (single txn) | Status transitions exceed 50/poll or fsync latency measured |
+| D8 | Store context propagation | Store scans exceed 10ms (>1000 entries) |
+| D9 | `ListClusters` double-unmarshal optimization | Cluster count exceeds 200 |
 
 ## Accuracy Trade-off Register
 
@@ -257,61 +278,64 @@ None of these are on the data plane or affect correctness.
 |-----------|-------|---------------|
 | `kweb.ListProfiles` (HTTP GET) | 1 | Network RTT (~5ms LAN) |
 | `kweb.ListVMs` (HTTP GET) | 1 | Network RTT + JSON unmarshal (~200 entries) |
-| `kweb.ListClusters` (HTTP GET) | 1 | Network RTT + JSON unmarshal (~50 entries) |
-| `store.List("vm")` (bbolt ForEach) | 1 | 250 entries × json.Unmarshal, ~250 filtered to ~200 |
-| `store.List("cluster")` (bbolt ForEach) | 1 | 250 entries × json.Unmarshal, ~250 filtered to ~50 |
-| `store.FindByKcliName` (bbolt Get) | ~200 | 1 index lookup + 1 data read + 1 unmarshal each |
-| `MapVMStatus` | ~200 | `strings.ToLower` + switch per VM |
+| `kweb.ListClusters` (HTTP GET) | 1 | Network RTT + double JSON unmarshal (~50 entries) |
+| `store.List("vm")` (bbolt ForEach) | 1 | 250 entries × bytes.Contains + ~200 json.Unmarshal |
+| `store.List("cluster")` (bbolt ForEach) | 1 | 250 entries × bytes.Contains + ~50 json.Unmarshal |
+| `MapVMStatus` | ~200 | `strings.ToLower` + switch (1 alloc each) |
 | `MapClusterStatus` | ~50 | Comparison only |
-| `map` creation | 4 | 2 kweb maps (no size hint) + 2 implicit |
+| `map` creation | 4 | Sized: `make(map, len(kweb*))` |
 | Prometheus observe | 1 | `MonitorPollDuration` histogram |
-| Total allocations | ~950 | ~500 json.Unmarshal + ~200 FindByKcliName + maps + strings |
+| Total allocations | ~700 | ~250 json.Unmarshal + ~200 ToLower + maps + slice pre-caps |
 
 **Per API list request (200 VMs):**
 
 | Operation | Count | Dominant Cost |
 |-----------|-------|---------------|
-| `store.List("vm")` | 1 (goroutine) | ~250 json.Unmarshal |
-| `kweb.ListVMs` | 1 (goroutine, parallel) | Network RTT |
-| `sort.Slice` | 1 | O(n log n), n=200 |
-| `entryToVM` | ~200 | `fmt.Sprintf` + struct construction |
-| Map build | 1 | ~200 insertions, no size hint |
+| `store.List("vm")` | 1 (goroutine) | ~200 json.Unmarshal |
+| `kweb.ListVMs` | 1 (goroutine, parallel) | Network RTT + body read |
+| `sort.SliceStable` | 1 | O(n log n) + O(n) aux memory |
+| `entryToVM` | ~200 | String concat + struct construction |
+| Map build | 1 | ~200 insertions (sized) |
 | `statusWriter` | 1 | Heap escape |
+| `slog.Logger` child | 1 | Heap escape (unused by handlers) |
 | JSON response marshal | 1 | ~200 VM structs |
 
 ## ROI Prioritization
 
-### Quick Wins (high impact / low effort / low risk)
+### Quick Wins (high impact, low effort, low risk)
 
 | ID | Fix | Effort |
 |----|-----|--------|
-| M4 | Add size hints to 4 map allocations | Minutes |
-| M3 | Replace `fmt.Sprintf` with `+` in `entryToVM`/`entryToCluster` | Minutes |
-| M5 | Pre-cap store list slices with `Stats().KeyN` | Minutes |
-| M6 | Remove `strings.ToLower` in `MapVMStatus` (kweb returns lowercase) | Minutes |
-| M10 | Set `MaxIdleConnsPerHost: 10` on kweb HTTP transport | Minutes |
-| M11 | Fast-path `bytes.Contains` check before full `parseResponse` unmarshal | Minutes |
+| P1-01 | `strings.EqualFold` in MapVMStatus (fix M6 regression) | Minutes |
+| P2-02 | `sort.Slice` with total-order composite key | Minutes |
+| P2-04 | Prune `lastPublish` on resource delete | Minutes |
+| P2-06 | Remove duplicate chi Logger middleware | Minutes |
+| P3-01 | Typed struct for RFC 7807 | Minutes |
+| P3-02 | MaxBodySize only on mutating methods | Minutes |
+| P3-04 | Size hint on params map | Minutes |
 
 ### High-Value Investments
 
 | ID | Fix | Effort |
 |----|-----|--------|
-| M1 | Extract NATS publish from monitor mutex | Hours |
-| M15 | Batch orphan detection using existing store data | Hours |
-| M7 | Cache health check result with short TTL | Hours |
-| M8 | Pass context through to `flushOne` NATS calls | Minutes |
+| P1-02 | Parallel monitor kweb calls (errgroup) | Hours |
+| P2-01 | Fix RequestLogger — store only request_id string | Hours |
+| P2-03 | singleflight on health cache | Hours |
+| P2-07 | `HasProfile()` without slice copy | Hours |
+| P3-05 | Validator skipper for health endpoints | Minutes |
 
-### Strategic (evaluate carefully)
+### Strategic (evaluate if fleet grows)
 
 | ID | Fix | Effort |
 |----|-----|--------|
-| M2 | Type-prefixed keys or separate buckets in bbolt | Days |
-| M9 | Context-aware NATS publish | Hours |
+| P2-05 | Cache kubeconfig for ACTIVE clusters | Days |
+| D7 | Batch monitor store writes | Days |
+| D3 | Separate bbolt buckets per type | Days |
 
 ### Defer
 
 | ID | Fix | Reason |
 |----|-----|--------|
-| M12 | `sync.Pool` for `statusWriter` | <10 req/s, negligible GC pressure |
-| M13 | UUID pool for CloudEvents | ~300ns, not worth complexity |
-| M14 | Binary bbolt encoding | JSON is fast enough at <500 entries |
+| D2 | `sync.Pool` for `statusWriter` | <10 req/s, negligible GC pressure |
+| D6 | Async NATS publisher | Event rate <10/poll, sync Publish is non-blocking |
+| D9 | `ListClusters` double-unmarshal | <50 clusters, kweb API format constrains |

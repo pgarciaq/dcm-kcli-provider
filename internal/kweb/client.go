@@ -62,6 +62,11 @@ type ClusterInfo struct {
 	Nodes       [][]string `json:"nodes,omitempty"`
 }
 
+// healthCacheTTL controls how long a cached health result is reused.
+// Trade-off: a short TTL increases kweb load under frequent health checks;
+// a long TTL can serve stale "healthy" for up to TTL after kweb goes down.
+// 5s is a reasonable balance for homelab environments. If kweb availability
+// is critical to downstream decisions, reduce this or bypass the cache.
 const healthCacheTTL = 5 * time.Second
 
 type Client struct {
@@ -395,7 +400,8 @@ func (c *Client) doDelete(ctx context.Context, path string) error {
 var failureMarker = []byte("failure")
 
 func (c *Client) parseResponse(resp *http.Response) error {
-	data, err := io.ReadAll(resp.Body)
+	const maxResponseSize = 10 << 20 // 10 MB
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return err
 	}

@@ -65,7 +65,7 @@ var (
 	MonitorStatusChanges = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "dcm_kcli",
 		Name:      "monitor_status_changes_total",
-		Help:      "Total status changes detected by the monitor.",
+		Help:      "Total status change events scheduled by the monitor, including coalesced debounces.",
 	})
 )
 

@@ -19,25 +19,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SECURITY.md` with vulnerability reporting guidance (GOV-02)
 - `govulncheck` CI step for dependency vulnerability scanning (GOV-03)
 - `CHANGELOG.md` following Keep a Changelog format (GOV-01)
+- `RequestLogger` middleware injects request_id into context-scoped slog (NEW-03)
+- Idempotent create now validates resource type (returns 409 for type mismatch) (NEW-16)
+- Tests for body limit, RFC 7807, request logger, mixed-case status, allowlist, type-check create (NEW-14)
 
 ### Changed
 
 - List endpoints (`ListVMs`, `ListClusters`) now fetch store and kweb data in parallel (PERF-01)
-- List results are sorted by `CreatedAt` descending for deterministic ordering (COR-02)
+- List results sorted by `CreatedAt` descending with ID tiebreaker via `sort.SliceStable` (COR-02, NEW-08)
 - Split `impl.go` (928 lines) into `vm_handlers.go`, `cluster_handlers.go`, `health_handlers.go`, `helpers.go` (DES-01)
-- `startedAt` timestamp is shared from `Server` to `StrictServerImpl` via `WithStartedAt` option (DES-02)
+- `startedAt` timestamp shared from `Server` to `StrictServerImpl` via `WithStartedAt` option (DES-02)
+- Readiness probe uses `atomic.Bool` per registrar — only reports registered on HTTP 200/201 (NEW-01)
+- Registrars stopped via `Stop()` before deregistration on shutdown (prevents re-register race) (NEW-02)
+- Dropped provider_hints keys logged at warn level; risk documented per key (NEW-04/05)
+- Body-too-large errors return RFC 7807 `application/problem+json` 413 response (NEW-06)
+- `MapVMStatus` tolerates mixed-case kweb statuses via `strings.ToLower` (NEW-07)
+- `MonitorStatusChanges` metric help text clarifies coalesced debounce semantics (NEW-10)
+- Deregister resets `RegistrationStatus` gauge to 0 (NEW-13)
+- `govulncheck` pinned to v1.3.0 in CI (NEW-15)
+- kweb `parseResponse` body read limited to 10 MB via `io.LimitReader` (NEW-12)
+- `Server.Addr()` uses `sync.Map` for race-safe listener address access
 
 ### Security
 
 - Documented trusted-network-only deployment requirement (SEC-01)
 - Documented TLS limitation with reverse-proxy recommendation (SEC-04)
 - Documented Docker Compose SSH key mount risk with mitigation advice (SEC-05)
+- Documented allowlist risk for cloudinit, cmdline, kernel, keys, iso, sharedfolders (NEW-04)
 
 ### Documentation
 
 - Added Security Considerations section to README
 - Added Known Limitations section (pagination, VM creation concurrency, single-instance) to README
 - Added `/ready` and `/health` endpoints to API table
+- Documented canonical JSON assumption in store type-tag pre-filter (NEW-09)
+- Documented health cache trade-off (5s TTL vs staleness) (NEW-11)
 
 ## [0.2.0] - 2026-06-17
 
