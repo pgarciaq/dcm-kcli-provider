@@ -1,6 +1,6 @@
 module github.com/pgarciaq/dcm-kcli-provider
 
-go 1.25.8
+go 1.25.5
 
 require (
 	github.com/cloudevents/sdk-go/v2 v2.16.2
