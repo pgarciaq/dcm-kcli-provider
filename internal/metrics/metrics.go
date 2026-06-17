@@ -42,6 +42,31 @@ var (
 		Name:      "nats_events_published_total",
 		Help:      "Total NATS CloudEvents published by type.",
 	}, []string{"event_type"})
+
+	RegistrationStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "dcm_kcli",
+		Name:      "registration_status",
+		Help:      "Provider registration status (1=registered, 0=retrying).",
+	}, []string{"provider"})
+
+	RegistrationAttemptsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "dcm_kcli",
+		Name:      "registration_attempts_total",
+		Help:      "Total SPM registration attempts by provider and result.",
+	}, []string{"provider", "result"})
+
+	MonitorPollDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "dcm_kcli",
+		Name:      "monitor_poll_duration_seconds",
+		Help:      "Duration of each monitor poll cycle.",
+		Buckets:   prometheus.DefBuckets,
+	})
+
+	MonitorStatusChanges = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "dcm_kcli",
+		Name:      "monitor_status_changes_total",
+		Help:      "Total status changes detected by the monitor.",
+	})
 )
 
 type statusWriter struct {

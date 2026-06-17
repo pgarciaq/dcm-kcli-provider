@@ -13,6 +13,8 @@ import (
 	spmv1alpha1 "github.com/dcm-project/service-provider-manager/api/v1alpha1/provider"
 	spmclient "github.com/dcm-project/service-provider-manager/pkg/client/provider"
 	"github.com/google/uuid"
+
+	"github.com/pgarciaq/dcm-kcli-provider/internal/metrics"
 )
 
 var errNonRetryable = errors.New("non-retryable")
@@ -119,6 +121,7 @@ func (r *Registrar) run(ctx context.Context) {
 func (r *Registrar) register(ctx context.Context) error {
 	providerUUID, err := uuid.Parse(r.providerCfg.ID)
 	if err != nil {
+		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "rejected").Inc()
 		return fmt.Errorf("invalid provider ID %q: %v: %w", r.providerCfg.ID, err, errNonRetryable)
 	}
 
@@ -144,25 +147,53 @@ func (r *Registrar) register(ctx context.Context) error {
 
 	resp, err := r.client.CreateProviderWithResponse(ctx, params, provider)
 	if err != nil {
+		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "error").Inc()
 		return fmt.Errorf("failed to register provider: %w", err)
 	}
 
 	switch resp.StatusCode() {
 	case http.StatusCreated:
 		r.logger.Info("registered new provider", "name", r.providerCfg.Name, "id", *resp.JSON201.Id)
+		metrics.RegistrationStatus.WithLabelValues(r.providerCfg.Name).Set(1)
+		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "success").Inc()
 	case http.StatusOK:
 		r.logger.Info("updated existing provider", "name", r.providerCfg.Name, "id", *resp.JSON200.Id)
+		metrics.RegistrationStatus.WithLabelValues(r.providerCfg.Name).Set(1)
+		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "success").Inc()
 	case http.StatusConflict:
+		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "rejected").Inc()
 		return fmt.Errorf("conflict registering provider: %s: %w", resp.ApplicationproblemJSON409.Title, errNonRetryable)
 	case http.StatusBadRequest:
+		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "rejected").Inc()
 		return fmt.Errorf("validation error: %s: %w", resp.ApplicationproblemJSON400.Title, errNonRetryable)
 	default:
 		sc := resp.StatusCode()
 		if sc >= 400 && sc < 500 {
+			metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "rejected").Inc()
 			return fmt.Errorf("registration returned non-retryable status %d: %w", sc, errNonRetryable)
 		}
+		metrics.RegistrationAttemptsTotal.WithLabelValues(r.providerCfg.Name, "error").Inc()
 		return fmt.Errorf("unexpected response status: %d", sc)
 	}
 
 	return nil
+}
+
+func (r *Registrar) Deregister(ctx context.Context) {
+	providerUUID, err := uuid.Parse(r.providerCfg.ID)
+	if err != nil {
+		r.logger.Warn("cannot deregister: invalid provider ID", "error", err)
+		return
+	}
+	providerID := providerUUID.String()
+	resp, err := r.client.DeleteProviderWithResponse(ctx, providerID)
+	if err != nil {
+		r.logger.Warn("deregistration failed", "provider", r.providerCfg.Name, "error", err)
+		return
+	}
+	if resp.StatusCode() >= 200 && resp.StatusCode() < 300 {
+		r.logger.Info("deregistered provider", "provider", r.providerCfg.Name)
+	} else {
+		r.logger.Warn("deregistration returned unexpected status", "provider", r.providerCfg.Name, "status", resp.StatusCode())
+	}
 }

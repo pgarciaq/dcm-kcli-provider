@@ -40,19 +40,27 @@ type Monitor struct {
 	pending       map[string]*pendingEvent
 	orphanCounter int
 	seenOrphans   map[string]bool
+
+	firstPollDone chan struct{}
+	firstPollOnce sync.Once
 }
 
 func New(kwebClient KwebClient, stateStore StateStore, pub events.Publisher, cfg Config, logger *slog.Logger) *Monitor {
 	return &Monitor{
-		kweb:        kwebClient,
-		store:       stateStore,
-		publisher:   pub,
-		config:      cfg,
-		logger:      logger,
-		lastPublish: make(map[string]time.Time),
-		pending:     make(map[string]*pendingEvent),
-		seenOrphans: make(map[string]bool),
+		kweb:          kwebClient,
+		store:         stateStore,
+		publisher:     pub,
+		config:        cfg,
+		logger:        logger,
+		lastPublish:   make(map[string]time.Time),
+		pending:       make(map[string]*pendingEvent),
+		seenOrphans:   make(map[string]bool),
+		firstPollDone: make(chan struct{}),
 	}
+}
+
+func (m *Monitor) FirstPollDone() <-chan struct{} {
+	return m.firstPollDone
 }
 
 func (m *Monitor) Profiles() []string {
@@ -86,11 +94,15 @@ func (m *Monitor) Run(ctx context.Context) {
 }
 
 func (m *Monitor) poll(ctx context.Context) {
+	start := time.Now()
+	defer func() { metrics.MonitorPollDuration.Observe(time.Since(start).Seconds()) }()
+
 	m.refreshProfiles(ctx)
 	kwebVMs := m.pollVMs(ctx)
 	m.pollClusters(ctx)
 	m.flushPending(ctx)
 	m.detectVMOrphans(kwebVMs)
+	m.firstPollOnce.Do(func() { close(m.firstPollDone) })
 }
 
 func (m *Monitor) refreshProfiles(ctx context.Context) {
@@ -194,6 +206,7 @@ func (m *Monitor) publishWithDebounce(_ context.Context, id, resourceType, statu
 		message:      message,
 		scheduledAt:  time.Now(),
 	}
+	metrics.MonitorStatusChanges.Inc()
 
 	lastTime, exists := m.lastPublish[id]
 	if exists && time.Since(lastTime) < m.config.DebounceWindow {

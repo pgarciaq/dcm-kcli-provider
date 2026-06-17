@@ -36,6 +36,38 @@ Kubernetes CRDs — this provider communicates with kcli's kweb HTTP API. This
 makes it ideal for developers and homelab operators who want to manage VMs and
 clusters through DCM without deploying a Kubernetes management stack.
 
+## Security Considerations
+
+This provider is designed for **trusted networks only** (homelab LANs,
+development VPNs, CI environments). It inherits kweb's security posture:
+
+- **No authentication.** All API endpoints are unauthenticated. Anyone with
+  network access can create, delete, and list resources, and retrieve
+  cluster-admin kubeconfigs. Deploy behind a firewall or VPN.
+- **No TLS.** All traffic is plaintext. For encrypted transport, place the
+  provider behind a TLS-terminating reverse proxy (e.g., Traefik, nginx).
+- **Provider hints allowlist.** The `provider_hints.kcli` field in create
+  requests is filtered through an allowlist of safe kcli parameters. Dangerous
+  keys like `cmds`, `scripts`, and `files` are silently dropped.
+- **Request body size limit.** Inbound request bodies are capped at 1 MB to
+  prevent memory exhaustion attacks.
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+
+### Known Limitations
+
+- **Offset-based pagination.** List endpoints use offset pagination
+  (`page_token` = integer offset). If resources are created or deleted between
+  pages, items may be skipped or duplicated. At homelab scale (~200 resources),
+  most results fit in a single page.
+- **VM creation is not serialized.** Unlike cluster creation (which is
+  serialized to protect kweb), VM creates can race. kweb handles conflicts
+  gracefully, but two identical requests without an `id` parameter will create
+  two VMs.
+- **Single-instance only.** The bbolt state store uses an exclusive file lock.
+  Running multiple provider instances against the same store file is not
+  supported.
+
 ## API
 
 The SP exposes an OpenAPI 3.0 API under `/api/v1alpha1`. The full spec is in
@@ -56,6 +88,8 @@ The SP exposes an OpenAPI 3.0 API under `/api/v1alpha1`. The full spec is in
 | GET | /api/v1alpha1/health | SP health check |
 | GET | /api/v1alpha1/vms/health | VM service health (used by SPM) |
 | GET | /api/v1alpha1/clusters/health | Cluster service health (used by SPM) |
+| GET | /health | Root liveness probe |
+| GET | /ready | Readiness probe (kweb + registration + first poll) |
 | GET | /metrics | Prometheus metrics |
 
 ### Request Format
@@ -113,6 +147,12 @@ make check-aep             # verify OpenAPI spec passes AEP linting (used by CI)
 ```bash
 docker compose up --build
 ```
+
+> **Note:** The `docker-compose.yaml` bind-mounts `~/.ssh` and `~/.kcli`
+> read-only into the kweb container. This exposes host SSH keys to the kweb
+> process. For improved security, consider using SSH agent forwarding
+> (`SSH_AUTH_SOCK`) or deploy-specific SSH keys instead of mounting your
+> personal `~/.ssh` directory.
 
 ### Releasing
 

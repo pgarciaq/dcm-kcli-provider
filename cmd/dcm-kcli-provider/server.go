@@ -45,13 +45,19 @@ type Server struct {
 	registrars []*registration.Registrar
 	listener   net.Listener
 	startedAt  time.Time
+
+	registered     chan struct{}
+	pollComplete   chan struct{}
+	registeredOnce sync.Once
 }
 
 func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	s := &Server{
-		cfg:       cfg,
-		logger:    logger,
-		startedAt: time.Now(),
+		cfg:          cfg,
+		logger:       logger,
+		startedAt:    time.Now(),
+		registered:   make(chan struct{}),
+		pollComplete: make(chan struct{}),
 	}
 
 	var err error
@@ -149,7 +155,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 	s.registrars = []*registration.Registrar{vmRegistrar, clusterRegistrar}
 
-	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version, apiserver.WithLogger(logger))
+	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version, apiserver.WithLogger(logger), apiserver.WithStartedAt(s.startedAt))
 	strictHandler := apiserver.NewStrictHandler(impl, nil)
 
 	swagger, err := apiv1alpha1.GetSwagger()
@@ -164,10 +170,12 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	}
 
 	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
 	r.Use(handlers.PanicRecovery(logger))
 	r.Use(middleware.Logger)
 	r.Use(metrics.Middleware)
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
+	r.Use(handlers.MaxBodySize(1 << 20)) // 1 MB
 	r.Use(nethttpmiddleware.OapiRequestValidatorWithOptions(swagger, &nethttpmiddleware.Options{
 		Options: openapi3filter.Options{
 			AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
@@ -180,6 +188,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 	root := http.NewServeMux()
 	root.Handle("/metrics", promhttp.Handler())
 	root.HandleFunc("/health", s.rootHealthHandler)
+	root.HandleFunc("/ready", s.readinessHandler)
 	root.Handle("/", r)
 
 	s.httpServer = &http.Server{
@@ -230,6 +239,23 @@ func (s *Server) Start(ctx context.Context) error {
 		reg.StartBackground(ctx)
 	}
 
+	for _, reg := range s.registrars {
+		r := reg
+		go func() {
+			<-r.Done()
+			s.registeredOnce.Do(func() { close(s.registered) })
+		}()
+	}
+
+	go func() {
+		<-s.monitor.FirstPollDone()
+		select {
+		case <-s.pollComplete:
+		default:
+			close(s.pollComplete)
+		}
+	}()
+
 	sigCtx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 	<-sigCtx.Done()
@@ -259,6 +285,13 @@ func (s *Server) shutdown(monCancel context.CancelFunc, wg *sync.WaitGroup) {
 	case <-done:
 	case <-shutCtx.Done():
 		s.logger.Warn("shutdown timeout exceeded, some goroutines may still be running")
+	}
+
+	// Best-effort deregistration
+	deregCtx, deregCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer deregCancel()
+	for _, reg := range s.registrars {
+		reg.Deregister(deregCtx)
 	}
 
 	s.publisher.Close()
@@ -293,6 +326,44 @@ func (s *Server) Addr() string {
 		return s.listener.Addr().String()
 	}
 	return ""
+}
+
+func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
+	kwebOK := false
+	if healthy, err := s.kwebClient.CheckHealth(r.Context()); err == nil && healthy {
+		kwebOK = true
+	}
+
+	registered := false
+	select {
+	case <-s.registered:
+		registered = true
+	default:
+	}
+
+	polled := false
+	select {
+	case <-s.pollComplete:
+		polled = true
+	default:
+	}
+
+	ready := kwebOK && registered && polled
+
+	type readyResp struct {
+		Ready      bool `json:"ready"`
+		Kweb       bool `json:"kweb"`
+		Registered bool `json:"registered"`
+		Polled     bool `json:"polled"`
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if ready {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(readyResp{Ready: ready, Kweb: kwebOK, Registered: registered, Polled: polled})
 }
 
 func (s *Server) rootHealthHandler(w http.ResponseWriter, r *http.Request) {
