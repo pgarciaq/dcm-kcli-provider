@@ -27,7 +27,7 @@ type problemDetail struct {
 func WriteRFC7807(w http.ResponseWriter, status int, title, detail string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(problemDetail{
+	_ = json.NewEncoder(w).Encode(problemDetail{ //nolint:errchkjson // ProblemDetail has only safe fields
 		Type:   "about:blank",
 		Title:  title,
 		Status: status,

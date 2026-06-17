@@ -146,7 +146,7 @@ func (s *StrictServerImpl) ListClusters(ctx context.Context, req ListClustersReq
 	wg.Wait()
 
 	if storeErr != nil {
-		return ListClustersdefaultApplicationProblemPlusJSONResponse{
+		return ListClustersdefaultApplicationProblemPlusJSONResponse{ //nolint:nilerr // returning error as HTTP response
 			Body:       problemError(500, storeErr.Error()),
 			StatusCode: 500,
 		}, nil

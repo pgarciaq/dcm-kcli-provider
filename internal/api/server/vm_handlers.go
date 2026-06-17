@@ -141,7 +141,7 @@ func (s *StrictServerImpl) ListVMs(ctx context.Context, req ListVMsRequestObject
 	wg.Wait()
 
 	if storeErr != nil {
-		return ListVMsdefaultApplicationProblemPlusJSONResponse{
+		return ListVMsdefaultApplicationProblemPlusJSONResponse{ //nolint:nilerr // returning error as HTTP response
 			Body:       problemError(500, storeErr.Error()),
 			StatusCode: 500,
 		}, nil

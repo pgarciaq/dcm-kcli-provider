@@ -36,13 +36,13 @@ import (
 const version = "0.2.0"
 
 type Server struct {
-	cfg        *config.Config
-	logger     *slog.Logger
-	httpServer *http.Server
-	store      *store.Store
-	publisher  events.Publisher
-	kwebClient *kweb.Client
-	monitor    *monitor.Monitor
+	cfg          *config.Config
+	logger       *slog.Logger
+	httpServer   *http.Server
+	store        *store.Store
+	publisher    events.Publisher
+	kwebClient   *kweb.Client
+	monitor      *monitor.Monitor
 	registrars   []*registration.Registrar
 	listener     net.Listener
 	listenerAddr sync.Map // stores the listener address string once available
@@ -155,7 +155,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	impl := apiserver.NewStrictServerImpl(s.kwebClient, s.store, s.publisher, s.monitor, version, apiserver.WithLogger(logger), apiserver.WithStartedAt(s.startedAt))
 	strictHandler := apiserver.NewStrictHandlerWithOptions(impl, nil, apiserver.StrictHTTPServerOptions{
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+		RequestErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			var maxBytesErr *http.MaxBytesError
 			if errors.As(err, &maxBytesErr) {
 				handlers.WriteRFC7807(w, http.StatusRequestEntityTooLarge, "Request Entity Too Large", "Request body exceeds the maximum allowed size.")
@@ -163,7 +163,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 			}
 			handlers.WriteRFC7807(w, http.StatusBadRequest, "Bad Request", err.Error())
 		},
-		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+		ResponseErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			handlers.WriteRFC7807(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		},
 	})
@@ -181,7 +181,7 @@ func NewServer(cfg *config.Config, logger *slog.Logger) (*Server, error) {
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(handlers.RequestLogger(logger))
+	r.Use(handlers.RequestLogger())
 	r.Use(handlers.PanicRecovery(logger))
 	r.Use(metrics.Middleware)
 	r.Use(middleware.Timeout(cfg.RequestTimeout))
@@ -371,7 +371,7 @@ func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
-	_ = json.NewEncoder(w).Encode(readyResp{Ready: ready, Kweb: kwebOK, Registered: registered, Polled: polled})
+	_ = json.NewEncoder(w).Encode(readyResp{Ready: ready, Kweb: kwebOK, Registered: registered, Polled: polled}) //nolint:errchkjson // response already committed
 }
 
 func (s *Server) rootHealthHandler(w http.ResponseWriter, r *http.Request) {
@@ -401,7 +401,7 @@ func (s *Server) rootHealthHandler(w http.ResponseWriter, r *http.Request) {
 		resp.Status = "healthy"
 		w.WriteHeader(http.StatusOK)
 	}
-	_ = json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp) //nolint:errchkjson // uptime is float32
 }
 
 func run() error {

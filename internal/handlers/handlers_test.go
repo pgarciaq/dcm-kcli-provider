@@ -52,7 +52,7 @@ func TestMaxBodySize_LimitsLargeBody(t *testing.T) {
 }
 
 func TestMaxBodySize_SkipsGET(t *testing.T) {
-	handler := handlers.MaxBodySize(10)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := handlers.MaxBodySize(10)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -86,8 +86,7 @@ func TestWriteRFC7807(t *testing.T) {
 }
 
 func TestRequestLogger_InjectsRequestID(t *testing.T) {
-	base := slog.Default()
-	mw := handlers.RequestLogger(base)
+	mw := handlers.RequestLogger()
 
 	var gotID string
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
